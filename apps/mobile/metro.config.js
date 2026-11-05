@@ -16,4 +16,6 @@ config.resolver.extraNodeModules = {
 };
 config.resolver.nodeModulesPaths = [path.resolve(projectRoot, "node_modules")];
 
+// expo-sqlite's web build imports a .wasm binary; Metro must treat it as an asset.
+if (!config.resolver.assetExts.includes("wasm")) config.resolver.assetExts.push("wasm");
 module.exports = config;
