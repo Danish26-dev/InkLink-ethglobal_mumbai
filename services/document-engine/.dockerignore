@@ -1,0 +1,12 @@
+# Never copy local dev artifacts or secrets into the image.
+.env
+.env.*
+!.env.example
+_work
+venv
+__pycache__
+*.pyc
+*.log
+.git
+.gitignore
+tests

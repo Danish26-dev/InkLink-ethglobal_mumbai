@@ -1,0 +1,21 @@
+{
+  "name": "inklink-local-printer-agent",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Inklink local printer adapter - runs on the print shop's Windows computer and exposes real printer discovery, availability, config validation and approved-job submission over localhost to the Inklink backend. Not ESP32 firmware.",
+  "main": "src/index.js",
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "start": "node src/index.js",
+    "start:dev": "node src/index.js",
+    "test": "node --test"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "express": "^4.19.2",
+    "pdf-to-printer": "^5.6.0"
+  }
+}

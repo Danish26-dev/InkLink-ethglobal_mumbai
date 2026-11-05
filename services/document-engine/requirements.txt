@@ -1,0 +1,10 @@
+fastapi==0.115.5
+uvicorn[standard]==0.32.1
+python-multipart==0.0.12
+python-docx==1.1.2
+pdf2docx==0.5.8
+# Imported directly (app/editing/pdf_native.py, validation.py). Previously only
+# pulled in transitively by pdf2docx; pinned to the version the tests ran on.
+# AGPL-3.0 licensed — see the notice in app/editing/pdf_native.py.
+PyMuPDF==1.28.2
+pydantic==2.9.2

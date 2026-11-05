@@ -1,0 +1,37 @@
+{
+  "name": "inklink-strands-agent",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Inklink agent service (Strands Agents SDK + Vertex AI) - turns natural-language print-shop instructions into a validated deterministic operation plan, executes it via the Document Engine, and records a print-options proposal",
+  "type": "module",
+  "main": "dist/src/index.js",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "start:dev": "tsx src/index.ts",
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "start": "node dist/src/index.js",
+    "test:unit": "tsx --test test/unit/*.test.ts",
+    "test:integration": "tsx --test test/integration/*.test.ts"
+  },
+  "dependencies": {
+    "@google/genai": "^2.28.0",
+    "@modelcontextprotocol/sdk": "^1.30.0",
+    "@opentelemetry/api": "^1.9.1",
+    "@strands-agents/sdk": "^1.17.0",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "express": "^5.1.0",
+    "multer": "^2.0.1",
+    "zod": "^4.6.1"
+  },
+  "devDependencies": {
+    "@types/cors": "^2.8.19",
+    "@types/express": "^5.0.0",
+    "@types/multer": "^1.4.12",
+    "@types/node": "^22.9.0",
+    "docx": "^9.0.2",
+    "tsx": "^4.23.13",
+    "typescript": "^5.6.3"
+  }
+}

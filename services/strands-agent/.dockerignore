@@ -1,0 +1,17 @@
+# Never copy local dev artifacts or secrets into the image.
+# CRITICAL: a local strands-agent/.env may contain machine-specific settings or
+# legacy credentials and must NEVER be baked into the image. Vertex AI uses
+# Application Default Credentials from the runtime identity, so no .env is
+# needed in the container.
+node_modules
+npm-debug.log
+dist
+.env
+.env.*
+!.env.example
+_work
+*.log
+.git
+.gitignore
+test
+coverage

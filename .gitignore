@@ -53,6 +53,19 @@ Thumbs.db
 coverage/
 .nyc_output/
 
+# Python services (document engine): caches, virtualenvs, per-job scratch
+__pycache__/
+*.py[cod]
+venv/
+.venv/
+.pytest_cache/
+_work/
+
+# Cloud credential files
+*service-account*.json
+*credentials*.json
+.aws/
+
 # Local dev databases and payment agent state
 *.sqlite
 *.sqlite3
