@@ -1,34 +1,27 @@
 import app from './app.js';
-import { getConfig, missingVertexConfig } from './config.js';
+import { providerStatus } from './model/providers.js';
 
-// Startup validation: fail fast with a clear, secret-free message if required
-// Vertex AI configuration is missing. This does NOT contact Google/Vertex — it
-// only checks that the non-secret settings are present. Credentials themselves
-// are resolved later by Application Default Credentials (ADC) when a request is
-// processed.
-const missing = missingVertexConfig();
-if (missing.length > 0) {
-  // eslint-disable-next-line no-console
-  console.error(`[inklink-agent] Cannot start: missing required configuration: ${missing.join(', ')}`);
-  // eslint-disable-next-line no-console
-  console.error(
-    '[inklink-agent] Set these in strands-agent/.env (see .env.example). Google credentials use ' +
-      'Application Default Credentials (ADC); run `gcloud auth application-default login` locally.',
-  );
-  process.exit(1);
-}
+// The service always starts so health checks can report status honestly. If
+// the selected model provider is not configured, every agent run reports the
+// agent as unavailable (no fallback to another provider).
+const port = Number.parseInt(process.env.PORT || '4000', 10);
+const host = process.env.HOST || '127.0.0.1';
+const status = providerStatus();
 
-const config = getConfig();
-
-app.listen(config.port, config.host, () => {
+app.listen(port, host, () => {
   // Log non-secret settings only. Never log credentials.
   // eslint-disable-next-line no-console
-  console.log(`[inklink-agent] listening on http://${config.host}:${config.port}`);
+  console.log(`[inklink-agent] listening on http://${host}:${port}`);
   // eslint-disable-next-line no-console
-  console.log(`[inklink-agent] document engine: ${config.documentEngineUrl}`);
+  console.log(`[inklink-agent] document engine: ${(process.env.DOCUMENT_ENGINE_URL || 'http://localhost:5001').replace(/\/+$/, '')}`);
   // eslint-disable-next-line no-console
   console.log(
-    `[inklink-agent] model: Vertex AI (${config.vertexModelId}) ` +
-      `location=${config.googleCloudLocation} vertexai=${config.useVertexAi}`,
+    `[inklink-agent] model provider: ${status.provider} model=${status.model ?? '-'} ` +
+      `trustMode=${status.trustMode ?? '-'} available=${status.available}` +
+      (status.reason ? ` (${status.reason})` : ''),
   );
+  if (!(process.env.AGENT_SERVICE_TOKEN ?? '').trim()) {
+    // eslint-disable-next-line no-console
+    console.warn('[inklink-agent] AGENT_SERVICE_TOKEN is not set: /api/operator/runs will refuse requests.');
+  }
 });

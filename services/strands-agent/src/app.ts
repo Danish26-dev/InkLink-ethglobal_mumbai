@@ -1,6 +1,7 @@
 import express, { type Express } from 'express';
 import cors from 'cors';
 import agentRoutes from './routes/agentRoutes.js';
+import operatorRoutes from './routes/operatorRoutes.js';
 import { errorHandler } from './middleware/errorHandler.js';
 import { parseOrigins } from './config.js';
 
@@ -20,6 +21,7 @@ app.use(express.json({ limit: '1mb' }));
 app.use(express.urlencoded({ limit: '1mb', extended: true }));
 
 app.use('/api', agentRoutes);
+app.use('/api/operator', operatorRoutes);
 
 app.use(errorHandler);
 

@@ -13,6 +13,7 @@ import { documentEngine } from '../clients/documentEngineClient.js';
 import { planningOrchestrator } from '../services/orchestrator.js';
 import { AgentError, toAgentError } from '../errors.js';
 import { SUPPORTED_OPERATIONS } from '../types.js';
+import { providerStatus } from '../model/providers.js';
 
 const upload = multer({
   storage: multer.memoryStorage(),
@@ -28,6 +29,9 @@ router.get('/health', async (_req: Request, res: Response) => {
     service: 'inklink-strands-agent',
     documentEngineReachable: engineUp,
     supportedOperations: SUPPORTED_OPERATIONS,
+    // Non-secret provider status; `available:false` means agent runs will refuse.
+    modelProvider: providerStatus(),
+    operatorRunsEnabled: Boolean((process.env.AGENT_SERVICE_TOKEN ?? '').trim()),
     timestamp: new Date().toISOString(),
   });
 });
@@ -66,7 +70,8 @@ router.post('/edit', upload.single('file'), async (req: Request, res: Response) 
     console.error(`[inklink-agent] ${agentErr.code}${agentErr.logDetail ? ` (${agentErr.logDetail})` : ''}`);
     // Choose an HTTP status: config/auth problems are 500/502-ish; keep 502 for
     // upstream AI failures so the Backend can distinguish them.
-    const status = agentErr.code === 'AGENT_MISCONFIGURED' ? 500 : 502;
+    const status =
+      agentErr.code === 'MODEL_PROVIDER_UNAVAILABLE' ? 503 : agentErr.code === 'AGENT_MISCONFIGURED' ? 500 : 502;
     res.status(status).json({ error: { code: agentErr.code, message: agentErr.message } });
   }
 });

@@ -62,6 +62,15 @@ const AWS_NAMES = new Set([
 export function toAgentError(err: unknown): AgentError {
   const rawMessage = err instanceof Error ? err.message : String(err ?? '');
 
+  // 0. Selected model provider not configured (no fallback is attempted).
+  if ((err as { code?: unknown })?.code === 'MODEL_PROVIDER_UNAVAILABLE') {
+    return new AgentError(
+      'MODEL_PROVIDER_UNAVAILABLE',
+      'The document assistant is not available right now.',
+      'ProviderUnconfigured',
+    );
+  }
+
   // 1. Missing-config errors from loadConfig(): "Missing GOOGLE_CLOUD_PROJECT" etc.
   if (/^Missing [A-Z0-9_]+$/.test(rawMessage)) {
     return new AgentError(
