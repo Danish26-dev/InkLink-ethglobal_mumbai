@@ -50,7 +50,9 @@ The services refuse to start without them. Values must match across services:
 3. `npm run setup:wallet -- --associate` associates USDC to the agent account.
 4. Mint test USDC at https://faucet.circle.com/ (choose Hedera Testnet).
 5. The **merchant** account must also be USDC-associated, or settlement fails with
-   `TOKEN_NOT_ASSOCIATED_TO_ACCOUNT`.
+   `TOKEN_NOT_ASSOCIATED_TO_ACCOUNT`. For a stand-in merchant you control, set its key in the one-time
+   env var `MERCHANT_PRIVATE_KEY` (never in `.env`) and run `npm run setup:merchant`
+   (DER key; `-- --ed25519` or `-- --ecdsa` for raw hex). The real merchant is the team lead's.
 6. `npm run setup:wallet` until it reports ready.
 
 ## Mock backend (`services/mock-gateway`, template: `.env.example`)

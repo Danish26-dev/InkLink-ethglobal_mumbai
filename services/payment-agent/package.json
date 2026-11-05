@@ -11,6 +11,7 @@
     "gate": "tsx src/gate-server.ts",
     "check:facilitator": "tsx src/scripts/check-facilitator.ts",
     "setup:wallet": "tsx src/scripts/setup-wallet.ts",
+    "setup:merchant": "tsx src/scripts/associate-merchant.ts",
     "demo:pay": "tsx src/scripts/demo-pay.ts",
     "typecheck": "tsc --noEmit",
     "test": "node --test --import tsx ./test/*.test.ts"
