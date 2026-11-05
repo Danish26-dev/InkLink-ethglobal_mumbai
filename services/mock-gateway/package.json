@@ -1,0 +1,27 @@
+{
+  "name": "@inklink/mock-gateway",
+  "version": "0.1.0",
+  "description": "Local dev stand-in for the Inklink shop gateway. Implements API Contracts 1-4 and 8 so the mobile app can be developed and tested with no backend or hardware. CLEARLY A MOCK.",
+  "license": "MIT",
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/server.ts",
+    "start": "tsx src/server.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "node --test --import tsx ./test/*.test.ts"
+  },
+  "dependencies": {
+    "@inklink/shared-schemas": "file:../../packages/shared-schemas",
+    "express": "^4.19.2",
+    "multer": "2.5.0",
+    "qrcode": "1.5.4"
+  },
+  "devDependencies": {
+    "@types/express": "^4.17.21",
+    "@types/multer": "^1.4.11",
+    "@types/node": "^20.14.0",
+    "@types/qrcode": "1.5.6",
+    "tsx": "4.23.15",
+    "typescript": "^5.4.0"
+  }
+}
