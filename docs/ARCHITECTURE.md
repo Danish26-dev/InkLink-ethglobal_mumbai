@@ -44,7 +44,6 @@ AI. Hedera payments and AI are optional layers on top.
   internet, cloud).
 - **Storage** (`src/db/`): SQLite for paired shops (pinned public key) and job history. No private
   keys, no documents.
-- **Assistant** (`src/assistant/`): Local Assistant interface with a clearly labelled mock.
 
 ## Payment agent (`services/payment-agent`)
 

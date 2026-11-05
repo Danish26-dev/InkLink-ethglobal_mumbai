@@ -3,7 +3,7 @@
  *
  * The private key lives in the platform secure store (iOS Keychain / Android
  * Keystore-backed storage), is marked this-device-only, and is never sent
- * anywhere, logged, or exposed to the Local Assistant. Only signatures leave the
+ * anywhere, logged, or exposed to any other component. Only signatures leave the
  * device.
  *
  * WEB (dev preview only): browsers have no secure store, so the key falls back to

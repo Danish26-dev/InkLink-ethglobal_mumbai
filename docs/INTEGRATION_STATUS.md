@@ -62,7 +62,7 @@ Blocky402 facilitator (24 checks, `npm run headless` in `apps/mobile`):
 
 - **A real funded settlement** — no transaction id, no HashScan proof yet.
 - Gateway TLS + certificate/public-key pinning (production).
-- BLE. OfflinePay. On-device SLM (labelled mock). HCS publishing (backend's).
+- BLE. OfflinePay. HCS publishing (backend's). On-device SLM and document editing were dropped from the app (team decision): users pick copies, page range, colour and paper size directly.
 - The real backend/gateway integration (waiting on XYZ's implementation).
 
 ## Frozen contracts (team lead, round 3)

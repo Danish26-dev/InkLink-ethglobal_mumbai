@@ -1,33 +1,19 @@
-// Screen 5 — Print Configuration (manual + Local Assistant mock)
+// Screen 5 — Print Configuration (copies, page range, colour, paper)
 import { useState } from "react";
 import { View, Text, TextInput, StyleSheet, Pressable } from "react-native";
 import { useRouter } from "expo-router";
 import type { PrintConfig } from "@inklink/shared-schemas";
-import { Screen, Heading, Body, Button, Card, MockBanner } from "@/components/ui";
+import { Screen, Heading, Body, Button, Card } from "@/components/ui";
 import { colors, radius, spacing, type } from "@/theme";
 import { useApp } from "@/state/app-context";
-import { MockLocalAssistant } from "@/assistant/local-assistant";
-
-const assistant = new MockLocalAssistant();
 
 export default function Configure() {
   const router = useRouter();
   const { session, updateSession } = useApp();
   const [cfg, setCfg] = useState<PrintConfig>(session.printConfig);
-  const [instruction, setInstruction] = useState("");
-  const [assistantNote, setAssistantNote] = useState<string | null>(null);
 
   function set<K extends keyof PrintConfig>(key: K, value: PrintConfig[K]) {
     setCfg((c) => ({ ...c, [key]: value }));
-  }
-
-  async function runAssistant() {
-    const result = await assistant.parse({ instruction });
-    setCfg(result.printConfig);
-    setAssistantNote(
-      `Parsed by ${result.source.toUpperCase()}` +
-        (result.uncertain.length ? ` · please confirm: ${result.uncertain.join(", ")}` : ""),
-    );
   }
 
   function next() {
@@ -38,19 +24,6 @@ export default function Configure() {
   return (
     <Screen>
       <Heading>Print settings</Heading>
-
-      <Card>
-        <Text style={type.caption}>Describe it in words (optional)</Text>
-        <TextInput
-          value={instruction}
-          onChangeText={setInstruction}
-          placeholder='e.g. "2 copies, black and white, pages 1-5, A4"'
-          style={styles.input}
-        />
-        <MockBanner text="Local Assistant is a labelled MOCK (rule-based). On-device SLM (llama.cpp) is a later milestone." />
-        <Button label="Fill settings from text" variant="secondary" onPress={runAssistant} />
-        {assistantNote ? <Body muted>{assistantNote}</Body> : null}
-      </Card>
 
       <Card>
         <Stepper label="Copies" value={cfg.copies} onChange={(v) => set("copies", Math.max(1, v))} />
