@@ -1,0 +1,40 @@
+{
+  "expo": {
+    "name": "Inklink",
+    "slug": "inklink",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "scheme": "inklink",
+    "userInterfaceStyle": "light",
+    "backgroundColor": "#FAFAF7",
+    "splash": {
+      "resizeMode": "contain",
+      "backgroundColor": "#111111"
+    },
+    "plugins": [
+      "expo-router",
+      "expo-camera",
+      "expo-document-picker",
+      "expo-sqlite",
+      "expo-status-bar",
+      "react-native-ble-plx",
+      "expo-secure-store",
+      "expo-build-properties"
+    ],
+    "ios": {
+      "supportsTablet": true,
+      "infoPlist": {
+        "NSCameraUsageDescription": "Inklink scans a shop's QR code to connect to its local print gateway.",
+        "NSBluetoothAlwaysUsageDescription": "Inklink uses Bluetooth to discover and pair with nearby print shops."
+      }
+    },
+    "android": {
+      "permissions": [
+        "CAMERA",
+        "BLUETOOTH_SCAN",
+        "BLUETOOTH_CONNECT",
+        "ACCESS_FINE_LOCATION"
+      ]
+    }
+  }
+}

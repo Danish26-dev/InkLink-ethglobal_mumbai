@@ -12,12 +12,49 @@ yarn-error.log*
 .env.*
 qa-shots
 *.tsbuildinfo
-
 # Secrets and wallet material
 *.pem
 *.key
 *.p12
 *.keystore
-
 # Kiro local-only configuration
 .kiro/
+
+# ── Inklink monorepo additions (native app, payment services) ──
+# Empty-valued env templates are meant to be committed; real .env files stay ignored above.
+!.env.example
+secrets/
+
+# Dependencies
+.pnp
+.pnp.js
+.yarn/
+
+# Expo / React Native build output and signing material
+apps/mobile/.expo/
+apps/mobile/web-build/
+*.jks
+*.p8
+*.mobileprovision
+*.orig.*
+
+# Build output
+build/
+
+# Logs
+*.log
+
+# OS / IDE
+Thumbs.db
+.idea/
+*.swp
+
+# Test / coverage
+coverage/
+.nyc_output/
+
+# Local dev databases and payment agent state
+*.sqlite
+*.sqlite3
+*.db
+.data/

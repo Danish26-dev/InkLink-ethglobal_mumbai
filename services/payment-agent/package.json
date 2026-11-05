@@ -1,0 +1,33 @@
+{
+  "name": "@inklink/payment-agent",
+  "version": "0.1.0",
+  "description": "Inklink Hedera x402 Payment Agent: policy enforcement, signing service, x402 client, and a standalone resource-server example for local testing.",
+  "license": "MIT",
+  "type": "module",
+  "main": "src/index.ts",
+  "scripts": {
+    "dev": "tsx watch src/server.ts",
+    "start": "tsx src/server.ts",
+    "gate": "tsx src/gate-server.ts",
+    "check:facilitator": "tsx src/scripts/check-facilitator.ts",
+    "setup:wallet": "tsx src/scripts/setup-wallet.ts",
+    "demo:pay": "tsx src/scripts/demo-pay.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "node --test --import tsx ./test/*.test.ts"
+  },
+  "dependencies": {
+    "@inklink/shared-schemas": "file:../../packages/shared-schemas",
+    "@x402/core": "2.30.0",
+    "@x402/express": "2.30.0",
+    "@x402/fetch": "2.30.0",
+    "@x402/hedera": "2.30.0",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2"
+  },
+  "devDependencies": {
+    "@types/express": "^4.17.21",
+    "@types/node": "^20.14.0",
+    "tsx": "^4.16.0",
+    "typescript": "^5.4.0"
+  }
+}
