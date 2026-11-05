@@ -139,7 +139,7 @@ export function validateScannedQr(raw: string, now: Date = new Date()): ShopQrPa
  * Origins to try, in preference order. The IPv4 hint comes first because mDNS
  * (.local) frequently fails to resolve on Android; both are probed in parallel.
  */
-export function gatewayCandidates(p: ShopQrPayload): string[] {
+export function gatewayCandidates(p: { gateway: { ip?: string | null; mdns: string; port: number } }): string[] {
   const { ip, mdns, port } = p.gateway;
   return [...(ip ? [`http://${ip}:${port}`] : []), `http://${mdns}:${port}`];
 }

@@ -57,9 +57,12 @@ export async function pickReachableOrigin(
   return index === -1 ? null : candidates[index];
 }
 
+/** What the handshake needs from a shop: the pinned key and gateway id (from a QR or from storage). */
+export type PinnedShopKey = Pick<ShopQrPayload, "publicKey" | "gatewayId">;
+
 export async function runHandshake(
   origin: string,
-  qr: ShopQrPayload,
+  qr: PinnedShopKey,
   challenge: string,
   fetchImpl: typeof fetch = fetch,
 ): Promise<PairingSession> {

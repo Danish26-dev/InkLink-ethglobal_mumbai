@@ -189,6 +189,46 @@ describe("pairing handshake", () => {
   });
 });
 
+describe("reconnect with a stored (pinned) shop key, no QR", () => {
+  const gw = makeGateway();
+  const qr = validateScannedQr(JSON.stringify(gw.qr()));
+  // Exactly what the shops table keeps.
+  const pinned = { publicKey: qr.publicKey, gatewayId: qr.gatewayId };
+  const CHALLENGE = base64urlEncode(Buffer.alloc(32, 5));
+  const reply = (sig: string, gatewayId = qr.gatewayId) =>
+    (async () =>
+      new Response(
+        JSON.stringify({
+          signedChallenge: sig,
+          gatewayId,
+          sessionToken: "session-token-abcdefghijkl",
+          sessionExpiresAt: new Date(Date.now() + 3600_000).toISOString(),
+        }),
+        { status: 200 },
+      )) as unknown as typeof fetch;
+
+  it("builds candidates from stored columns, with or without an IP", () => {
+    assert.deepEqual(gatewayCandidates({ gateway: { ip: "192.168.1.20", mdns: "shop.local", port: 8000 } }), [
+      "http://192.168.1.20:8000",
+      "http://shop.local:8000",
+    ]);
+    assert.deepEqual(gatewayCandidates({ gateway: { ip: null, mdns: "shop.local", port: 8000 } }), ["http://shop.local:8000"]);
+  });
+
+  it("opens a session when the gateway still holds the pinned key", async () => {
+    const s = await runHandshake("http://x", pinned, CHALLENGE, reply(gw.sign(CHALLENGE)));
+    assert.equal(s.sessionToken, "session-token-abcdefghijkl");
+  });
+
+  it("refuses a gateway with a different key (shop changed device or impostor)", async () => {
+    const other = makeGateway();
+    await assert.rejects(
+      runHandshake("http://x", pinned, CHALLENGE, reply(other.sign(CHALLENGE))),
+      (e: unknown) => e instanceof PairingError && e.code === "SIGNATURE_INVALID",
+    );
+  });
+});
+
 describe("pickReachableOrigin", () => {
   const up = (origins: string[]) =>
     (async (url: string) => {
