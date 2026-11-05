@@ -3,6 +3,11 @@
  * Flat with soft elevation. No loud gradients, no fintech clichés.
  */
 
+import { Platform } from "react-native";
+
+/** Monospace face used for small technical labels, like the website. */
+export const mono = Platform.select({ ios: "Menlo", android: "monospace", default: "monospace" }) as string;
+
 export const colors = {
   // Core brand
   inkBlack: "#111111",
@@ -97,10 +102,11 @@ export const type = {
     color: colors.graphite,
   },
   overline: {
+    fontFamily: mono,
     fontSize: 11,
     lineHeight: 14,
-    fontWeight: "700" as const,
-    letterSpacing: 1.4,
+    fontWeight: "400" as const,
+    letterSpacing: 1.6,
     textTransform: "uppercase" as const,
     color: colors.graphite,
   },

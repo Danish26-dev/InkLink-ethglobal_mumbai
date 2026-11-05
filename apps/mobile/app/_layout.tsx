@@ -2,6 +2,7 @@ import { Stack } from "expo-router";
 import { StatusBar } from "expo-status-bar";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 import { AppProvider } from "@/state/app-context";
+import { Logo } from "@/components/ui";
 import { colors } from "@/theme";
 
 export default function RootLayout() {
@@ -15,6 +16,7 @@ export default function RootLayout() {
             headerTintColor: colors.signalOrange,
             headerTitleStyle: { fontWeight: "700", color: colors.inkBlack },
             headerShadowVisible: false,
+            headerRight: () => <Logo size={28} />,
             headerBackButtonDisplayMode: "minimal",
             contentStyle: { backgroundColor: colors.paperWhite },
           }}

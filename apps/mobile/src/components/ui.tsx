@@ -6,6 +6,7 @@
 import React from "react";
 import {
   ActivityIndicator,
+  Image,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -131,6 +132,38 @@ export function MockBanner({ text }: { text: string }) {
   );
 }
 
+/** The Inklink mark on its black tile (same artwork as the app icon). */
+export function Logo({ size = 40 }: { size?: number }) {
+  return (
+    <Image
+      source={require("../../assets/icon.png")}
+      accessibilityLabel="Inklink"
+      style={{ width: size, height: size, borderRadius: size * 0.22 }}
+    />
+  );
+}
+
+/** Small mono label led by a short orange rule, e.g. "— LOCAL-FIRST". */
+export function Eyebrow({ children }: { children: React.ReactNode }) {
+  return (
+    <View style={{ flexDirection: "row", alignItems: "center", marginBottom: spacing.md }}>
+      <View style={{ width: 22, height: 2, backgroundColor: colors.signalOrange, marginRight: spacing.sm }} />
+      <Text style={[type.overline, { flexShrink: 1 }]}>{children}</Text>
+    </View>
+  );
+}
+
+/** Note with an orange left edge, like the website's "Interactive" callout. */
+export function Callout({ label, title, children }: { label: string; title: string; children?: React.ReactNode }) {
+  return (
+    <View style={styles.callout}>
+      <Text style={[type.overline, { marginBottom: 4 }]}>{label}</Text>
+      <Text style={type.heading}>{title}</Text>
+      {children ? <Text style={[type.caption, { marginTop: 4 }]}>{children}</Text> : null}
+    </View>
+  );
+}
+
 /** Determinate progress bar; `fraction` is 0..1. */
 export function ProgressBar({ fraction }: { fraction: number }) {
   const pct = Math.round(Math.max(0, Math.min(1, fraction)) * 100);
@@ -206,4 +239,11 @@ const styles = StyleSheet.create({
   },
   mockText: { flex: 1, fontSize: 12, lineHeight: 17, color: colors.ink60, fontWeight: "500" },
   divider: { height: 1, backgroundColor: colors.hairline, marginVertical: spacing.sm },
+  callout: {
+    borderLeftWidth: 2,
+    borderLeftColor: colors.signalOrange,
+    paddingLeft: spacing.md,
+    paddingVertical: spacing.xs,
+    marginVertical: spacing.md,
+  },
 });
