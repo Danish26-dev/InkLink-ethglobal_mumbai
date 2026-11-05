@@ -1,51 +1,55 @@
 ﻿{
-    "expo":  {
-                 "name":  "Inklink",
-                 "slug":  "inklink",
-                 "version":  "0.1.0",
-                 "orientation":  "portrait",
-                 "scheme":  "inklink",
-                 "userInterfaceStyle":  "light",
-                 "backgroundColor":  "#000000",
-                 "splash":  {
-                                "resizeMode":  "contain",
-                                "backgroundColor":  "#000000",
-                                "image":  "./assets/splash.png"
-                            },
-                 "plugins":  [
-                                 "expo-router",
-                                 "expo-camera",
-                                 "expo-document-picker",
-                                 "expo-sqlite",
-                                 "expo-status-bar",
-                                 "react-native-ble-plx",
-                                 "expo-secure-store",
-                                 "expo-build-properties"
-                             ],
-                 "ios":  {
-                             "supportsTablet":  true,
-                             "infoPlist":  {
-                                               "NSCameraUsageDescription":  "Inklink scans a shop\u0027s QR code to connect to its local print gateway.",
-                                               "NSBluetoothAlwaysUsageDescription":  "Inklink uses Bluetooth to discover and pair with nearby print shops."
-                                           },
-                             "bundleIdentifier":  "com.inklink.app"
-                         },
-                 "android":  {
-                                 "permissions":  [
-                                                     "CAMERA",
-                                                     "BLUETOOTH_SCAN",
-                                                     "BLUETOOTH_CONNECT",
-                                                     "ACCESS_FINE_LOCATION"
-                                                 ],
-                                 "package":  "com.inklink.app",
-                                 "adaptiveIcon":  {
-                                                      "foregroundImage":  "./assets/adaptive-icon.png",
-                                                      "backgroundColor":  "#000000"
-                                                  }
-                             },
-                 "icon":  "./assets/icon.png",
-                 "web":  {
-                             "favicon":  "./assets/favicon.png"
-                         }
-             }
+  "expo": {
+    "name": "Inklink",
+    "slug": "inklink",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "scheme": "inklink",
+    "userInterfaceStyle": "light",
+    "backgroundColor": "#000000",
+    "icon": "./assets/icon.png",
+    "plugins": [
+      "expo-router",
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Inklink scans a shop's QR code to connect to its local print gateway.",
+          "recordAudioAndroid": false
+        }
+      ],
+      "expo-document-picker",
+      "expo-sqlite",
+      "expo-status-bar",
+      "expo-secure-store",
+      "expo-build-properties",
+      [
+        "expo-splash-screen",
+        {
+          "image": "./assets/splash.png",
+          "backgroundColor": "#000000",
+          "resizeMode": "contain",
+          "imageWidth": 220
+        }
+      ]
+    ],
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.inklink.app",
+      "infoPlist": {
+        "NSCameraUsageDescription": "Inklink scans a shop's QR code to connect to its local print gateway."
+      }
+    },
+    "android": {
+      "package": "com.inklink.app",
+      "versionCode": 1,
+      "permissions": ["CAMERA"],
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#000000"
+      }
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    }
+  }
 }

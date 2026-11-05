@@ -70,3 +70,18 @@ Windows may need an inbound firewall rule for port 8000 (admin PowerShell):
 - `INKLINK_ENV=production` builds with cleartext HTTP **off** (see SECURITY.md). Default is a dev build.
 - On a physical phone use Expo Go SDK 58: `npx expo start --lan` and scan the terminal QR. If the
   phone cannot reach Metro, allow inbound port 8081 and check both are on the same Wi-Fi.
+
+## Building an installable Android APK (EAS cloud build)
+
+The app is configured for it (`apps/mobile/eas.json`, package `com.inklink.app`). No Android SDK is
+needed on your machine; Expo builds in the cloud.
+
+1. Create a free account at https://expo.dev.
+2. `cd apps/mobile`, then `npx eas-cli login`.
+3. `npx eas-cli build -p android --profile preview` (answer yes when it offers to set up the project).
+4. When it finishes (about 10-20 minutes) it prints a download link. Open it on the phone and install.
+
+The `preview` profile is a **development-style build**: it allows plain HTTP to the shop gateway on
+the local network, which the demo needs. The `production` profile sets `INKLINK_ENV=production`,
+which turns cleartext off; use it only once the gateway serves TLS with pinning (not built yet).
+The app asks only for the camera permission (to scan the shop QR).
