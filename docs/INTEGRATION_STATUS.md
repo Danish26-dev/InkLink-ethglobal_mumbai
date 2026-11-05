@@ -42,6 +42,24 @@ blockchain settlement (dev rule 8).
 | `apps/mobile` | Expo SDK 58. Camera QR scan, real Ed25519 verification, challenge-response pairing, session auth with re-handshake, reconnect to paired shops by pinned key, upload progress with idempotent retry, device key in secure storage, signed authorization, quote with USDC settlement + deadline, 12 screens. **39 tests pass**; typecheck clean; Android and web bundles compile. **Not confirmed on a physical phone.** |
 | `services/mock-gateway` | Mock backend: signed QR, pairing, sessions, FX (mock rate, rounds up), agent calls, callback receiver, gate requirements endpoint. **11 tests pass.** |
 
+## Verified on Hedera testnet (real settlement)
+
+One real x402 payment was run with `npm run demo:pay` (2026-11-05):
+
+- Transaction: `0.0.7162784@1793916490.190691897`
+  (https://hashscan.io/testnet/transaction/0.0.7162784@1793916490.190691897)
+- Mirror node: `SUCCESS`, consensus `2026-11-05T22:08:17Z`.
+- Transfer: 0.10 USDC (`0.0.429274`) from the agent `0.0.11330279` to the merchant `0.0.11227614`,
+  settled by Blocky402 on `hedera:testnet` after the agent checked the device-signed spend limits.
+
+What this run was and was not:
+
+- It used the in-process gate with a FIXED dev price (0.10), a dev device key, and a **stand-in
+  merchant account** that Omkar controls. It did not go through the phone app or the real Inklink
+  backend.
+- The settlement callback returned HTTP 401 because a leftover test server with a different secret
+  was listening on :8000, not a real backend. The payment itself is confirmed by the mirror node.
+- It still has to be repeated with the real merchant account and the real backend.
 ## Verified end to end (no funded wallet)
 
 Headless run of the app's real client code against mock backend + agent + gate, plus the live
@@ -60,7 +78,8 @@ Blocky402 facilitator (24 checks, `npm run headless` in `apps/mobile`):
 
 ## NOT done
 
-- **A real funded settlement** — no transaction id, no HashScan proof yet.
+- **A real funded settlement through the real backend and the real merchant account.** One testnet
+  settlement exists (see above), but it used a stand-in merchant and the demo script.
 - Gateway TLS + certificate/public-key pinning (production).
 - BLE. OfflinePay. HCS publishing (backend's). On-device SLM and document editing were dropped from the app (team decision): users pick copies, page range, colour and paper size directly.
 - The real backend/gateway integration (waiting on XYZ's implementation).
