@@ -1,0 +1,34 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <rect width="1024" height="1024" rx="210" fill="#000000"/>
+  <!-- Orange folded corner -->
+  <path d="M636 205 L819 205 L819 388 Z" fill="#F15A36"/>
+  <!-- Upper document loop (white stroke) -->
+  <path d="M345 275
+           h150
+           a40 40 0 0 1 40 40
+           v120"
+        fill="none" stroke="#FFFFFF" stroke-width="86" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M305 275
+           a40 40 0 0 0 -40 40
+           v150"
+        fill="none" stroke="#FFFFFF" stroke-width="86" stroke-linecap="round" stroke-linejoin="round"/>
+  <!-- Lower interlocking loop -->
+  <path d="M225 520
+           h300
+           a40 40 0 0 1 40 40
+           v150"
+        fill="none" stroke="#FFFFFF" stroke-width="86" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M225 520
+           v240
+           h320
+           a40 40 0 0 0 40 -40
+           v-360
+           l0 0"
+        fill="none" stroke="#FFFFFF" stroke-width="86" stroke-linecap="round" stroke-linejoin="round"/>
+  <!-- Inner notch -->
+  <path d="M345 600
+           h120
+           a20 20 0 0 1 20 20
+           v90"
+        fill="none" stroke="#000000" stroke-width="30" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>
