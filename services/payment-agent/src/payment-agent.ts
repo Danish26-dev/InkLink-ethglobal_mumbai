@@ -195,7 +195,11 @@ export class PaymentAgent {
       );
     }
 
-    if (req.quoteExpiresAt && Date.parse(req.quoteExpiresAt) <= now.getTime()) {
+    const expiresMs = Date.parse(req.quoteExpiresAt);
+    if (Number.isNaN(expiresMs)) {
+      throw new PaymentError("POLICY_VIOLATION", "quoteExpiresAt must be an ISO-8601 timestamp");
+    }
+    if (expiresMs <= now.getTime()) {
       throw new PaymentError("QUOTE_EXPIRED", "The quote has expired; request a new quote");
     }
 

@@ -75,16 +75,31 @@ export function loadServerSecurityConfig() {
   };
 }
 
+/**
+ * The paying agent wallet and the shop's receiving wallet must be different accounts.
+ * Paying yourself would "settle" without moving value and make a demo meaningless.
+ */
+export function assertWalletsSeparate(agentAccountId: string, merchantAccountId: string): void {
+  if (agentAccountId.trim() === merchantAccountId.trim()) {
+    throw new Error(
+      "MERCHANT_ACCOUNT_ID must differ from HEDERA_AGENT_ACCOUNT_ID: the payment agent wallet and the merchant receiving wallet must be separate accounts",
+    );
+  }
+}
+
 /** Loaded lazily — only needed when actually signing/settling. */
 export function loadHederaConfig() {
+  const agentAccountId = required("HEDERA_AGENT_ACCOUNT_ID");
+  const merchantAccountId = required("MERCHANT_ACCOUNT_ID");
+  assertWalletsSeparate(agentAccountId, merchantAccountId);
   return {
     network: HEDERA_TESTNET,
-    agentAccountId: required("HEDERA_AGENT_ACCOUNT_ID"),
+    agentAccountId,
     agentPrivateKey: required("HEDERA_AGENT_PRIVATE_KEY"),
     usdcTokenId: optional("HTS_USDC_TOKEN_ID", TESTNET_USDC_TOKEN_ID),
     usdcDecimals: Number(optional("HTS_USDC_DECIMALS", "6")),
     merchantId: optional("MERCHANT_ID", "shop_001"),
-    merchantAccountId: required("MERCHANT_ACCOUNT_ID"),
+    merchantAccountId,
   };
 }
 

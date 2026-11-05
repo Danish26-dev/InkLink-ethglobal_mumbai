@@ -186,10 +186,10 @@ export interface AgentInitiatePaymentRequest extends InitiatePaymentRequest {
   /** The x402-protected resource to pay, e.g. .../api/v1/jobs/{jobId}/execute. */
   resourceUrl: string;
   /**
-   * Quote expiry = payment deadline. Optional field added to the agreed list; when
-   * present the agent refuses to start a payment after it.
+   * Authoritative backend quote expiry = payment deadline. Required: the agent refuses
+   * to start a payment without it, or after it.
    */
-  quoteExpiresAt?: IsoTimestamp;
+  quoteExpiresAt: IsoTimestamp;
 }
 
 /* ───────────── CONTRACT 7 — Payment Status ─────────────

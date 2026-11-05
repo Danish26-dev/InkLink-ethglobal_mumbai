@@ -38,7 +38,7 @@ blockchain settlement (dev rule 8).
 | Module | Status |
 |--------|--------|
 | `packages/shared-schemas` | Contracts, wire format (canonical JSON, Base64URL), authorization, callback headers/event. ESM (`"type":"module"`). |
-| `services/payment-agent` | Bearer auth, device-signature verification, backend-supplied intent, resource allowlist, exact-match x402 policy, mirror-node verification, spend reservation, HMAC callback with retries, x402 gate, durable state file with restart recovery (re-verifies claimed transactions, never releases spend when the outcome is unknown, resends undelivered callbacks). **76 tests pass.** |
+| `services/payment-agent` | Bearer auth, device-signature verification, backend-supplied intent, resource allowlist, exact-match x402 policy, mirror-node verification, spend reservation, HMAC callback with retries, x402 gate, durable state file with restart recovery (re-verifies claimed transactions, never releases spend when the outcome is unknown, resends undelivered callbacks). **78 tests pass.** |
 | `apps/mobile` | Expo SDK 58. Camera QR scan, real Ed25519 verification, challenge-response pairing, session auth with re-handshake, reconnect to paired shops by pinned key, upload progress with idempotent retry, device key in secure storage, signed authorization, quote with USDC settlement + deadline, 12 screens. **39 tests pass**; typecheck clean; Android and web bundles compile. **Not confirmed on a physical phone.** |
 | `services/mock-gateway` | Mock backend: signed QR, pairing, sessions, FX (mock rate, rounds up), agent calls, callback receiver, gate requirements endpoint. **11 tests pass.** |
 
@@ -65,17 +65,32 @@ Blocky402 facilitator (24 checks, `npm run headless` in `apps/mobile`):
 - BLE. OfflinePay. On-device SLM (labelled mock). HCS publishing (backend's).
 - The real backend/gateway integration (waiting on XYZ's implementation).
 
-## Open items for XYZ
+## Frozen contracts (team lead, round 3)
 
-1. **Merchant Hedera account** (funded, USDC `0.0.429274` associated).
-2. Confirm the **session fields** `sessionToken` / `sessionExpiresAt` in the pairing response.
-3. Confirm the **gate requirements endpoint** (proposed `GET /api/v1/internal/jobs/{jobId}/payment-requirements`).
-4. Confirm the **`rate` direction** in the quote (mock = USDC per 1 INR).
-5. Accept two small **additions** to the agreed lists: `quoteExpiresAt` on backend → agent, and
-   `nonce` / `devicePublicKey` / `signature` on Contract 5.
-6. The three spellings of the asset (`USDC`, `HTS-USDC`, `HTS_USDC`) are implemented as written.
-7. How is the backend-owned QR refreshed (expiry) and how are session tokens revoked?
+Frozen for review: nothing merges to `main` until the contracts and integration tests are reviewed
+together. All 13+ commits stay on `feat/native-app-hedera-x402`.
 
+| # | Decision | Status |
+|---|----------|--------|
+| 1 | Dedicated testnet merchant account with HTS-USDC `0.0.429274` associated; **agent wallet and merchant wallet are separate accounts** | Account ID pending (XYZ, shared privately). The agent now refuses to start when both IDs are equal |
+| 2 | Pairing response: `signedChallenge`, `gatewayId`, `sessionToken`, `sessionExpiresAt`. Token is short-lived and bound to the verified gateway | Fields frozen. Lifetime and gateway binding are the backend's to enforce (mock: 15 min) |
+| 3 | `GET /api/v1/internal/jobs/{jobId}/payment-requirements`; the backend owns the quote and settlement amount, the agent never converts INR to USDC | Frozen. Agent only reads the amount |
+| 4 | FX: USDC per 1 INR, 5 min snapshot, 6 dp, round up, backend quote expiry is the deadline | Frozen. Display-only in the app |
+| 5 | Callback HMAC-SHA256 over `timestamp + "." + rawBody`; headers `X-Inklink-Timestamp` / `X-Inklink-Signature`; reject expired timestamps and duplicates | Agent signs; mock receiver is the reference (5-min window, `paymentId` idempotency) |
+| 6 | Contract 5 adds `nonce`, `devicePublicKey`, `signature`; backend validates and enforces policy | Frozen |
+| 7 | Backend to agent: `jobId, quoteId, authorizationId, paymentMethod, merchantId, settlementAmount, resourceUrl, quoteExpiresAt` with `INTERNAL_API_TOKEN` | Frozen. `quoteExpiresAt` is now **required** (agent rejects a request without a valid one) |
+| 8 | Agent verifies settlement on the mirror node and signs the callback; backend moves the job to `awaiting_execution`; settlement never marks a print `completed` | Done |
+| 9 | HCS published by the backend only, one shared topic | Backend's |
+| 10 | Blocky402, no fallback facilitator or network | Done |
+| 11 | Local HTTP for the controlled dev demo; production needs TLS and pinning | TLS and pinning not built |
+| 12 | Branch stays `feat/native-app-hedera-x402`, no merge to `main` yet | Respected |
+
+## Still open
+
+1. **Merchant account ID** from XYZ (private channel), then a coordinated funded settlement test.
+2. Integration against the **actual Inklink backend**; the mock gateway is a reference, not the final target.
+3. How the backend refreshes the QR on expiry and revokes session tokens.
+4. Production TLS and certificate or public-key pinning.
 ## Action items for Omkar (blocks the first real settlement)
 
 1. Create a dedicated ECDSA testnet account at https://portal.hedera.com/ and claim test HBAR.

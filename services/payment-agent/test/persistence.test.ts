@@ -84,6 +84,7 @@ const initiateReq = (authorizationId: string, jobId: string, amount = "0.60") =>
   merchantId: "shop_001",
   settlementAmount: amount,
   resourceUrl: `${GATE}/api/v1/jobs/${jobId}/execute`,
+  quoteExpiresAt: new Date(Date.now() + 5 * 60_000).toISOString(),
 });
 
 /** Simulates a process restart: memory is lost, state is reloaded from disk. */

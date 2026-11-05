@@ -86,6 +86,7 @@ async function main() {
       merchantId: cfg.merchantId,
       settlementAmount: requested,
       resourceUrl: `http://localhost:${serviceConfig.gatePort}/api/v1/jobs/${jobId}/execute`,
+      quoteExpiresAt: new Date(Date.now() + 5 * 60_000).toISOString(),
     });
     console.log(`Payment ${started.paymentId} requested for ${requested} USDC (gate charges ${price}) …`);
 

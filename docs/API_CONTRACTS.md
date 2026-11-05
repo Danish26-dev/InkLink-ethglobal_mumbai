@@ -188,7 +188,7 @@ All require `Authorization: Bearer <INTERNAL_API_TOKEN>`.
   "quoteExpiresAt": "ISO-8601" }
 ```
 
-`quoteExpiresAt` is an addition to the agreed list: the agent refuses to start after it.
+`quoteExpiresAt` is the authoritative backend quote expiry and is **required**: the agent rejects a request without a valid timestamp and refuses to start a payment after it. `MERCHANT_ACCOUNT_ID` must differ from `HEDERA_AGENT_ACCOUNT_ID`; the agent refuses to run otherwise.
 The agent only pays gates whose **origin is allowlisted** and whose path is exactly
 `/api/v1/jobs/{jobId}/execute` for the same job.
 

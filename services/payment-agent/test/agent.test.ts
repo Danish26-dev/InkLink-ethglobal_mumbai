@@ -80,6 +80,7 @@ const initiateReq = (
   merchantId: "shop_001",
   settlementAmount: amount,
   resourceUrl: `${GATE}/api/v1/jobs/${jobId}/execute`,
+  quoteExpiresAt: new Date(Date.now() + 5 * 60_000).toISOString(),
   ...over,
 });
 
@@ -232,6 +233,25 @@ describe("initiate: policy, resource allowlist, reservation", () => {
       })),
       /quote has expired/,
     );
+  });
+
+  it("refuses a missing or malformed quote deadline", async () => {
+    const { agent } = makeAgent("hang");
+    const auth = authorize(agent);
+    for (const bad of [undefined, "", "tomorrow"]) {
+      await assert.rejects(
+        agent.initiate(initiateReq(auth.authorizationId, "job_1", "0.10", {
+          quoteExpiresAt: bad as unknown as string,
+        })),
+        /quoteExpiresAt|ISO-8601/,
+      );
+    }
+  });
+
+  it("requires the agent wallet and the merchant wallet to be different accounts", async () => {
+    const { assertWalletsSeparate } = await import("../src/config.js");
+    assert.throws(() => assertWalletsSeparate("0.0.1001", "0.0.1001"), /must differ/);
+    assert.doesNotThrow(() => assertWalletsSeparate("0.0.1001", "0.0.2002"));
   });
 
   it("rejects zero or malformed settlement amounts", async () => {

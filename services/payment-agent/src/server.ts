@@ -120,7 +120,7 @@ function main() {
     if (
       !hasStrings(req.body, [
         "jobId", "quoteId", "authorizationId", "paymentMethod",
-        "merchantId", "settlementAmount", "resourceUrl",
+        "merchantId", "settlementAmount", "resourceUrl", "quoteExpiresAt",
       ])
     ) {
       res.status(400).json(errorBody("POLICY_VIOLATION", "Missing or malformed payment fields"));
