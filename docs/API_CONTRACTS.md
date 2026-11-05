@@ -1,0 +1,239 @@
+# Inklink — API Contracts (v0.1, locked decisions applied)
+
+Source of truth in code: `packages/shared-schemas`. The main backend owner (XYZ) owns final
+schema approval; any breaking change is communicated before implementation. Do not change
+endpoint names, payment states, network or asset independently.
+
+## Architecture
+
+```
+App ──(session token)──▶ Inklink backend ──(bearer)──▶ Payment Agent ──▶ x402 gate ──▶ Hedera
+                              ▲                              │
+                              └──── signed settlement callback (HMAC) ───┘
+```
+
+- The **app talks only to the Inklink backend / shop gateway**. It never calls the payment agent
+  or the gate, and never sends or computes a USDC amount.
+- The **backend** owns the quote, INR→USDC conversion, authorization validation and the
+  authoritative job/payment status.
+- The **payment agent** (Omkar) and **x402 gate** (Omkar, Node) are internal services.
+
+## Conventions
+
+- Base URL: `http://<gateway-local-ip>:8000/api/v1` (local) / `https://<cloud-run-url>/api/v1` (cloud).
+  The local address comes from the signed QR; it is never hardcoded.
+- JSON everywhere except document upload (`multipart/form-data`). Money is a **decimal string**.
+- After pairing every request carries `Authorization: Bearer <sessionToken>`. Exempt:
+  `GET /health`, `POST /pairing/verify`, and `/internal/*` (which use their own auth).
+- Errors use one envelope and the HTTP status must match:
+
+```json
+{ "success": false, "error": { "code": "SHOP_UNAVAILABLE", "message": "..." } }
+```
+
+### ErrorCode (final list)
+
+`SHOP_UNAVAILABLE` `SHOP_NOT_FOUND` `GATEWAY_UNREACHABLE` `INVALID_QR` `QR_EXPIRED`
+`SIGNATURE_INVALID` `PAIRING_FAILED` `DOCUMENT_TOO_LARGE` `UNSUPPORTED_FORMAT` `UPLOAD_FAILED`
+`JOB_NOT_FOUND` `QUOTE_EXPIRED` `UNAUTHORIZED` `SESSION_EXPIRED` `AUTHORIZATION_INVALID`
+`AUTHORIZATION_SIGNATURE_INVALID` `AUTHORIZATION_REPLAYED` `RESOURCE_NOT_ALLOWED`
+`FACILITATOR_UNAVAILABLE` `POLICY_VIOLATION` `PAYMENT_FAILED` `SETTLEMENT_UNVERIFIED`
+`FACILITATOR_UNSUPPORTED` `INTERNAL_ERROR`
+
+Suggested HTTP mapping: 400 invalid input · 401 `UNAUTHORIZED`/`SESSION_EXPIRED` · 403
+`AUTHORIZATION_SIGNATURE_INVALID`/`POLICY_VIOLATION`/`RESOURCE_NOT_ALLOWED` · 404 not found ·
+409 `AUTHORIZATION_REPLAYED` · 410 `QUOTE_EXPIRED` · 413 `DOCUMENT_TOO_LARGE` ·
+415 `UNSUPPORTED_FORMAT` · 422 `SETTLEMENT_UNVERIFIED` · 503 `FACILITATOR_UNAVAILABLE`.
+
+### Statuses (confirmed)
+
+- Job: `created` `awaiting_payment` `awaiting_execution` `executing` `completed` `cancelled` `failed`
+- Device: `unknown` `offline` `ready` `processing` `paper_unavailable` `jam` `error`
+- Payment: `created` `pending` `awaiting_authorization` `processing` `settled` `failed` `expired` `refunded`
+- Settlement moves the job to **`awaiting_execution`**, never to `completed`.
+
+## Shared wire format (signing)
+
+All signatures are **Ed25519**. Keys (raw 32 bytes) and signatures (64 bytes) are **Base64URL,
+unpadded** (padding is tolerated on decode). Signed bytes are the UTF-8 of a **canonical JSON**
+string: keys sorted recursively, no whitespace, absent optional fields omitted (not `null`).
+
+```python
+# canonical JSON (Python)
+json.dumps(obj, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+# Base64URL
+base64.urlsafe_b64encode(raw).rstrip(b"=").decode()
+```
+
+### Interop test vectors (pinned by automated tests on both sides)
+
+Gateway key seed `0102…1f20` (hex) → public key `ebVWLo_mVPlAeLES6KmLp5AfhTrmlb7X4OORC60ElmQ`.
+
+QR canonical string (what is signed; note `signature` is excluded):
+
+```
+{"expiresAt":"2030-01-01T00:00:00.000Z","gateway":{"discovery":"local","ip":"192.168.1.20","mdns":"gateway-001.local","port":8000},"gatewayId":"gateway_001","nonce":"AAECAwQFBgcICQoL","publicKey":"ebVWLo_mVPlAeLES6KmLp5AfhTrmlb7X4OORC60ElmQ","shopId":"shop_001","type":"inklink_shop","version":"1.0"}
+```
+QR signature: `w2YMAQjC9utmmpS7z_Tnxm9HxrYdDkDyQrunujR761f79w2TrD7cXidRUDPPozmGAUh7PSJfND1io_8_n6McAQ`
+
+Pairing: challenge `AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8` (signed as the literal string) →
+`lz3N-oxfN0f_KDlpeh0UvEhCzn_iG0Aznh-wEUfZq-9Y_Pp5BecE3Ay-BIkuJiF0KV1Y7WZA-F-tsysP5VYZAQ`
+
+Callback HMAC: secret `test-secret-0123456789abcdef`, timestamp `1700000000`, raw body
+`{"paymentId":"payment_1","jobId":"job_1","amount":"0.10"}` →
+`sha256=47e949af76798bac7c53f33164612740179350ac8897c06c18e4142d8526d43c`
+
+Authorization: device seed `fffe…e0e1e0` → public key `uvxxvq06xeS2PpyCFu5xo0quxlci7tvKcotOmzzM45Y`,
+`customerReference` `dev_uvxxvq06xeS2PpyCFu5xo0`, canonical string:
+
+```
+{"agentId":"inklink_payment_agent","asset":"USDC","customerReference":"dev_uvxxvq06xeS2PpyCFu5xo0","devicePublicKey":"uvxxvq06xeS2PpyCFu5xo0quxlci7tvKcotOmzzM45Y","expiresAt":"2030-01-01T00:00:00.000Z","maxPerTransaction":"1.00","merchantId":"shop_001","nonce":"AAECAwQFBgcICQoLDA0ODw","totalSpendingLimit":"5.00","type":"inklink_payment_authorization","version":"1.0"}
+```
+signature: `AzKuH4zCyXc5tHL6wxwIpOArKNRVSu-4jPObogtWM_ZRVdPxAtmPCj8YFQQLhCzHxV2uvYhPHqHr-cRa6IbrCA`
+
+## Discovery and pairing
+
+### Signed QR payload
+
+QR text = compact JSON of the object below, or the Base64URL of that JSON. The app accepts both.
+
+```json
+{
+  "type": "inklink_shop", "version": "1.0",
+  "shopId": "shop_001", "gatewayId": "gateway_001",
+  "gateway": { "discovery": "local", "mdns": "gateway-001.local", "ip": "192.168.1.20", "port": 8000 },
+  "publicKey": "<b64url>", "nonce": "<unique>", "expiresAt": "ISO-8601",
+  "signature": "<b64url Ed25519 over canonical JSON without `signature`>"
+}
+```
+
+- `ip` is optional (IPv4). The app probes `ip` and `mdns` in parallel and prefers the IP.
+- The app **rejects** gateways that are not on the local network: `mdns` must end in `.local`
+  and `ip` must be private/link-local. A hostile QR cannot aim uploads at the internet.
+- The app rejects expired, unsigned, tampered or wrong-key QRs, and pins the QR's public key.
+
+### `POST /api/v1/pairing/verify` (no session required)
+
+Request `{ "challenge": "<b64url, 16-256 chars>" }`. The gateway signs the **literal challenge
+string** (UTF-8) and issues a session:
+
+```json
+{ "signedChallenge": "<b64url>", "gatewayId": "gateway_001",
+  "sessionToken": "<opaque, >=16 chars>", "sessionExpiresAt": "ISO-8601" }
+```
+
+`signedChallenge`/`gatewayId` are agreed. **`sessionToken`/`sessionExpiresAt` are my proposed
+names for the session fields; please confirm.** The app trusts nothing until the signature
+verifies against the QR's key and `gatewayId` matches. On a 401 the app silently re-runs this
+handshake once and retries.
+
+## Contracts
+
+Flow: `POST /jobs` → `POST /documents` → `POST /jobs/{id}/quote` → `POST /payments/authorizations`
+→ `POST /payments` → poll `GET /payments/{id}` and `GET /jobs/{id}/status`.
+
+| # | Endpoint | Notes |
+|---|----------|-------|
+| 1 | `GET /shops/{shopId}` | |
+| 3 | `POST /jobs` | Call first; the backend mints the authoritative `jobId` |
+| 2 | `POST /documents` (multipart: `file`, `shopId`, `customerId`, `jobId`) | Max 25 MB, PDF/DOCX. Honors `Idempotency-Key` |
+| 4 | `POST /jobs/{jobId}/quote` | INR quote **plus `settlement`** (below) |
+| 5 | `POST /payments/authorizations` | Device-signed (below) |
+| 6 | `POST /payments` | App sends only `{jobId, quoteId, authorizationId, paymentMethod}` |
+| 7 | `GET /payments/{paymentId}` | `settled` only from a verified callback; `transactionId` only once settled |
+| 8 | `GET /jobs/{jobId}/status` | Backend-authoritative |
+
+`customerId` on upload is the anonymous `customerReference` (no PII).
+
+### Contract 4 — quote with settlement
+
+```json
+{ "quoteId": "quote_001", "jobId": "job_001", "merchantId": "shop_001",
+  "amount": "20.00", "asset": "INR", "expiresAt": "ISO-8601",
+  "paymentMethods": ["traditional", "hedera_x402"],
+  "settlement": { "asset": "HTS-USDC", "amount": "0.10", "rate": "0.005", "capturedAt": "ISO-8601" } }
+```
+
+Backend policy (agreed): rate snapshot valid 5 minutes, USDC to 6 decimals, **round up**, FX
+provider configurable, **quote expiry is the payment deadline**. The app only displays this.
+`rate` is read as USDC per 1 INR in the mock; please confirm the direction you intend.
+
+### Contract 5 — device-signed authorization
+
+```json
+{ "customerReference": "dev_…", "agentId": "inklink_payment_agent", "merchantId": "shop_001",
+  "maxPerTransaction": "1.00", "totalSpendingLimit": "5.00", "asset": "USDC",
+  "expiresAt": "ISO-8601", "nonce": "<b64url, >=16 bytes>",
+  "devicePublicKey": "<b64url>", "signature": "<b64url>" }
+```
+
+`nonce`, `devicePublicKey` and `signature` are additions to the earlier shape. The signature
+covers the fields above plus `type`/`version` (see vector). The payment agent verifies: field
+formats, key/signature lengths, `customerReference == "dev_" + first 22 chars of devicePublicKey`,
+agent id, expiry in the future and ≤ 24 h, then the signature. A nonce is single-use; the exact
+same signed request is idempotent. The private key never leaves the phone.
+
+## Internal: backend → payment agent
+
+All require `Authorization: Bearer <INTERNAL_API_TOKEN>`.
+
+- `POST /api/v1/payments/authorizations` — forward the app's Contract 5 body unchanged.
+- `POST /api/v1/payments`:
+
+```json
+{ "jobId": "job_001", "quoteId": "quote_001", "authorizationId": "auth_001",
+  "paymentMethod": "hedera_x402", "merchantId": "shop_001",
+  "settlementAmount": "0.10",
+  "resourceUrl": "http://<gate>/api/v1/jobs/job_001/execute",
+  "quoteExpiresAt": "ISO-8601" }
+```
+
+`quoteExpiresAt` is an addition to the agreed list: the agent refuses to start after it.
+The agent only pays gates whose **origin is allowlisted** and whose path is exactly
+`/api/v1/jobs/{jobId}/execute` for the same job.
+
+- `GET /api/v1/payments/{paymentId}` — agent-side status. The backend may use this to learn
+  about **failures**; it must learn about **success** only from the signed callback.
+- `GET /health` — unauthenticated; `{ ok, facilitator: "ok"|"unavailable" }`.
+
+## Internal: x402 gate
+
+`POST /api/v1/jobs/{jobId}/execute` — HTTP 402 with the exact USDC amount and the shop's Hedera
+account as `payTo`, asset USDC `0.0.429274`, network `hedera:testnet`, then Blocky402
+verify/settle. A successful payment only means payment was accepted; it never implies the printer
+finished. Prices come from the backend via a lookup, see below.
+
+**PROPOSED, not yet agreed:** `GET /api/v1/internal/jobs/{jobId}/payment-requirements`
+(`Authorization: Bearer <BACKEND_API_TOKEN>`) →
+`{ "jobId", "merchantAccountId": "0.0.X", "amount": "0.10", "expiresAt": "ISO-8601" }`.
+The URL is configuration on the gate (`REQUIREMENTS_URL_TEMPLATE`), so the real name can differ.
+
+## Internal: agent → backend settlement callback
+
+`POST /api/v1/internal/payment-settled`, sent only after the agent verified the transfer on the
+Hedera mirror node. Retried with exponential backoff (1s, 2s, 4s … capped at 30s, ±20% jitter,
+up to 8 attempts); `paymentId` is the idempotency key.
+
+```json
+{ "paymentId": "payment_001", "jobId": "job_001", "payerAccount": "0.0.X",
+  "merchantAccountId": "0.0.X", "network": "hedera:testnet", "asset": "HTS_USDC",
+  "amount": "0.10", "transactionId": "0.0.123@1700000000.000000001",
+  "settlementTimestamp": "ISO-8601", "status": "settled",
+  "hashscanUrl": "https://hashscan.io/testnet/transaction/0.0.123-1700000000-000000001" }
+```
+
+Headers: `X-Inklink-Timestamp: <unix seconds>`, `X-Inklink-Signature: sha256=<hex>`,
+`Idempotency-Key: <paymentId>`. Signature = `HMAC-SHA256(secret, timestamp + "." + rawBody)`.
+Verify over the **raw request bytes** (never re-serialize JSON) and reject timestamps older
+than 5 minutes. Retry-safe responses: 2xx (also for duplicates); the agent retries 5xx/408/429
+and stops on any other 4xx.
+
+The backend should also check the event against what it expects (jobId, `amount` equals the
+quoted settlement amount, `merchantAccountId`, `hashscanUrl` derived from `transactionId`) and
+treat a second settlement for the same `paymentId` with a different `transactionId` as an error.
+
+## Naming note (please confirm)
+
+The settlement asset is written three ways, as in the agreed contracts: `USDC` (Contracts 5-7 and
+the policy), `HTS-USDC` (quote `settlement.asset`), `HTS_USDC` (callback/registry). They are
+implemented exactly as written; unifying them later would be a contract change.
