@@ -1,0 +1,37 @@
+# Inklink payment agent + x402 gate on ONE host (e.g. a single GCP Compute Engine VM).
+#
+#   cp agent.env.example .env.agent   # fill in (git-ignored: matches .env.*)
+#   cp gate.env.example  .env.gate    # fill in (git-ignored)
+#   docker compose up -d --build
+#
+# Both services bind to 127.0.0.1 only. They are INTERNAL: the Inklink backend reaches the agent,
+# the agent reaches the gate over the compose network. Put only the backend behind public HTTPS.
+# Run exactly ONE agent instance: it owns the spend-limit state file on the agent-data volume.
+services:
+  agent:
+    build:
+      context: ..
+      dockerfile: services/payment-agent/Dockerfile
+    image: inklink-payment-agent
+    command: ["npm", "start"]
+    env_file: .env.agent
+    environment:
+      ALLOWED_RESOURCE_ORIGINS: "http://gate:4022"
+    volumes:
+      - agent-data:/data
+    ports:
+      - "127.0.0.1:4021:4021"
+    restart: unless-stopped
+    depends_on:
+      - gate
+
+  gate:
+    image: inklink-payment-agent
+    command: ["npm", "run", "gate"]
+    env_file: .env.gate
+    ports:
+      - "127.0.0.1:4022:4022"
+    restart: unless-stopped
+
+volumes:
+  agent-data:

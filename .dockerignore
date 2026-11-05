@@ -1,0 +1,13 @@
+**/node_modules
+**/.env
+**/.env.*
+!**/.env.example
+**/.data
+.git
+.kiro
+apps
+docs
+public
+src
+**/dist
+**/*.log
