@@ -140,6 +140,7 @@ export function installOperatorHooks(agent: Agent, ctx: OperatorRunContext, opts
       const r = opts.doc.lastProcessResult;
       emitEvent(ctx, 'document_processed', {
         runId: ctx.runId,
+        engineJobId: r.job_id,
         totalReplacements: r.changes.total_replacements,
         outputFormat: r.output_format === 'pdf' ? 'pdf' : 'docx',
         pageCount: r.validation?.page_count ?? null,

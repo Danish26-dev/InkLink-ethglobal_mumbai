@@ -129,6 +129,12 @@ export interface ToolFailedPayload {
 
 export interface DocumentProcessedPayload {
   runId: string;
+  /**
+   * Document Engine scratch job holding the edited file. Internal: the backend
+   * downloads the file, then deletes the engine job, and strips this field
+   * before relaying the event to browsers.
+   */
+  engineJobId?: string;
   totalReplacements: number;
   outputFormat: "pdf" | "docx";
   pageCount: number | null;
