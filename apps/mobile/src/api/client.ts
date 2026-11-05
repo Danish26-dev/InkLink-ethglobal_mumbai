@@ -25,6 +25,26 @@ import {
   type Shop,
 } from "@inklink/shared-schemas";
 
+import {
+  UploadAbortedError,
+  UploadNetworkError,
+  backoffMs,
+  isRetryableStatus,
+  xhrTransport,
+  type UploadResult,
+  type UploadTransport,
+} from "./upload";
+
+const MAX_UPLOAD_ATTEMPTS = 3;
+
+export interface UploadProgress {
+  /** Bytes sent in the current attempt. */
+  sent: number;
+  total: number;
+  attempt: number;
+  maxAttempts: number;
+}
+
 export class ApiError extends Error {
   constructor(
     public code: string,
@@ -91,15 +111,22 @@ export class InklinkApi {
     return res;
   }
 
-  private async parse<T>(res: Response): Promise<T> {
+  private parseBody<T>(text: string, status: number): T {
     let data: T | ErrorEnvelope;
     try {
-      data = (await res.json()) as T | ErrorEnvelope;
+      data = JSON.parse(text) as T | ErrorEnvelope;
     } catch {
-      throw new ApiError("INTERNAL_ERROR", `Unexpected response (HTTP ${res.status})`, res.status);
+      throw new ApiError("INTERNAL_ERROR", `Unexpected response (HTTP ${status})`, status);
     }
-    if (isErrorEnvelope(data)) throw new ApiError(data.error.code, data.error.message, res.status);
+    if (isErrorEnvelope(data)) throw new ApiError(data.error.code, data.error.message, status);
+    if (status < 200 || status >= 300) {
+      throw new ApiError("INTERNAL_ERROR", `Unexpected response (HTTP ${status})`, status);
+    }
     return data as T;
+  }
+
+  private async parse<T>(res: Response): Promise<T> {
+    return this.parseBody<T>(await res.text(), res.status);
   }
 
   private async json<T>(path: string, init: RequestInit = {}): Promise<T> {
@@ -130,7 +157,15 @@ export class InklinkApi {
     return this.json<CreateJobResponse>(`/jobs`, { method: "POST", body: JSON.stringify(body) });
   }
 
-  // Contract 2 — multipart upload against the existing jobId
+  /**
+   * Contract 2 — multipart upload against the existing jobId, over local Wi-Fi.
+   *
+   * Reports progress, and survives an interrupted transfer: network failures and transient
+   * 5xx/408/429 responses are retried (up to 3 attempts, with backoff) by re-sending the whole
+   * file with the SAME Idempotency-Key, so the gateway never creates a duplicate document.
+   * Anything else (bad file type, too large, no session) fails immediately. A 401 silently
+   * re-runs the pairing handshake once. The caller can cancel with an AbortSignal.
+   */
   async uploadDocument(args: {
     fileUri: string;
     fileName: string;
@@ -139,19 +174,80 @@ export class InklinkApi {
     customerId: string;
     jobId: string;
     idempotencyKey: string;
+    onProgress?: (p: UploadProgress) => void;
+    /** Called before waiting to retry: which attempt just failed and why. */
+    onRetry?: (failedAttempt: number, reason: string) => void;
+    signal?: AbortSignal;
+    /** Injected for tests; defaults to the XMLHttpRequest transport. */
+    transport?: UploadTransport;
+    sleep?: (ms: number) => Promise<void>;
   }): Promise<DocumentUploadResponse> {
-    const form = new FormData();
-    // React Native FormData file shape.
-    form.append("file", { uri: args.fileUri, name: args.fileName, type: args.mimeType } as unknown as Blob);
-    form.append("shopId", args.shopId);
-    form.append("customerId", args.customerId);
-    form.append("jobId", args.jobId);
-    const res = await this.send(`/documents`, {
-      method: "POST",
-      headers: { "Idempotency-Key": args.idempotencyKey },
-      body: form,
-    });
-    return this.parse<DocumentUploadResponse>(res);
+    if (!this.isConfigured) {
+      throw new ApiError("GATEWAY_UNREACHABLE", "No shop connected. Scan the shop's QR code first.");
+    }
+    if (!this.session) throw new ApiError("UNAUTHORIZED", "Not paired with the shop yet.", 401);
+
+    const transport = args.transport ?? xhrTransport;
+    const sleep = args.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
+    const url = `${this.baseUrl}/documents`;
+    let reauthenticated = false;
+
+    for (let attempt = 1; ; attempt++) {
+      const report = (sent: number, total: number) =>
+        args.onProgress?.({ sent, total, attempt, maxAttempts: MAX_UPLOAD_ATTEMPTS });
+
+      let result: UploadResult;
+      try {
+        result = await transport(
+          url,
+          {
+            file: { uri: args.fileUri, name: args.fileName, type: args.mimeType },
+            fields: { shopId: args.shopId, customerId: args.customerId, jobId: args.jobId },
+            headers: { "Idempotency-Key": args.idempotencyKey, ...this.authHeaders() },
+          },
+          report,
+          args.signal,
+        );
+      } catch (err) {
+        if (err instanceof UploadAbortedError) {
+          throw new ApiError("UPLOAD_FAILED", "Upload cancelled");
+        }
+        if (err instanceof UploadNetworkError) {
+          if (attempt >= MAX_UPLOAD_ATTEMPTS) {
+            throw new ApiError(
+              "UPLOAD_FAILED",
+              `The upload was interrupted and did not complete after ${MAX_UPLOAD_ATTEMPTS} attempts (${err.message}). Check you are still on the shop's Wi-Fi and try again.`,
+            );
+          }
+          args.onRetry?.(attempt, err.message);
+          await sleep(backoffMs(attempt));
+          continue;
+        }
+        throw err;
+      }
+
+      // Expired session: renew it once and resend. Not counted as a failed attempt.
+      if (result.status === 401 && !reauthenticated && this.reauthenticate) {
+        reauthenticated = true;
+        if (await this.reauthenticate()) {
+          attempt--;
+          continue;
+        }
+      }
+
+      if (result.status >= 200 && result.status < 300) {
+        return this.parseBody<DocumentUploadResponse>(result.body, result.status);
+      }
+
+      if (isRetryableStatus(result.status) && attempt < MAX_UPLOAD_ATTEMPTS) {
+        args.onRetry?.(attempt, `The shop gateway answered HTTP ${result.status}`);
+        await sleep(backoffMs(attempt));
+        continue;
+      }
+
+      // Final failure: surface the gateway's own error code (e.g. UNSUPPORTED_FORMAT).
+      return this.parseBody<DocumentUploadResponse>(result.body, result.status);
+    }
   }
 
   // Contract 4 — INR quote plus the backend-computed USDC settlement (display only)

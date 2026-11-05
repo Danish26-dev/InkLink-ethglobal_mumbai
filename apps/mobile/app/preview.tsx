@@ -1,10 +1,11 @@
 // Screen 6 — Job Preview: create job -> upload -> quote
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { View, Text } from "react-native";
 import { useRouter } from "expo-router";
-import { Screen, Heading, Body, Button, Card } from "@/components/ui";
+import { Screen, Heading, Body, Button, Card, ProgressBar } from "@/components/ui";
 import { colors, spacing, type } from "@/theme";
 import { useApp } from "@/state/app-context";
+import type { CreateJobResponse } from "@inklink/shared-schemas";
 import { getDeviceIdentity } from "@/crypto/device-key";
 import { db } from "@/db/database";
 
@@ -14,6 +15,11 @@ export default function Preview() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [step, setStep] = useState<string>("");
+  const [progress, setProgress] = useState<number | null>(null);
+  const [retryNote, setRetryNote] = useState<string | null>(null);
+  // A retry after a failed transfer must reuse the job already created, not make an orphan.
+  const jobRef = useRef<CreateJobResponse | null>(null);
+  const abortRef = useRef<AbortController | null>(null);
 
   const { document, printConfig, shop } = session;
 
@@ -27,13 +33,18 @@ export default function Preview() {
     try {
       // Contract 3 — create job FIRST (authoritative jobId from gateway).
       setStep("Creating job…");
-      const job = await api.createJob({ shopId: shop.shopId, printConfig });
+      const job = jobRef.current ?? (await api.createJob({ shopId: shop.shopId, printConfig }));
+      jobRef.current = job;
       updateSession({ job });
 
       // Contract 2 — upload the document against that jobId (idempotent).
       setStep("Transferring document…");
       // Anonymous per-install id derived from the device key: no personal data.
       const { customerReference } = await getDeviceIdentity();
+      const controller = new AbortController();
+      abortRef.current = controller;
+      setProgress(0);
+      setRetryNote(null);
       const upload = await api.uploadDocument({
         fileUri: document.uri,
         fileName: document.name,
@@ -42,7 +53,17 @@ export default function Preview() {
         customerId: customerReference,
         jobId: job.jobId,
         idempotencyKey: `${job.jobId}:${document.name}`,
+        signal: controller.signal,
+        onProgress: (p) => {
+          setRetryNote(p.attempt > 1 ? `Retrying (${p.attempt}/${p.maxAttempts})�` : null);
+          if (p.total > 0) setProgress(p.sent / p.total);
+        },
+        onRetry: (_n, reason) => {
+          setProgress(0);
+          setRetryNote(`${reason}. Retrying�`);
+        },
       });
+      setProgress(null);
       updateSession({ documentId: upload.documentId });
 
       // Contract 4 — generate quotation (INR).
@@ -75,6 +96,9 @@ export default function Preview() {
     } finally {
       setBusy(false);
       setStep("");
+      setProgress(null);
+      setRetryNote(null);
+      abortRef.current = null;
     }
   }
 
@@ -104,11 +128,16 @@ export default function Preview() {
       ) : null}
 
       {step ? <Body muted>{step}</Body> : null}
+      {progress !== null ? <ProgressBar fraction={progress} /> : null}
+      {retryNote ? <Body muted>{retryNote}</Body> : null}
       {error ? (
         <Text style={[type.caption, { color: colors.danger, marginVertical: spacing.sm }]}>{error}</Text>
       ) : null}
 
-      <Button label="Submit & get quote" onPress={submit} loading={busy} />
+      <Button label={error ? "Try again" : "Submit & get quote"} onPress={submit} loading={busy} />
+      {busy && progress !== null ? (
+        <Button label="Cancel upload" variant="secondary" onPress={() => abortRef.current?.abort()} />
+      ) : null}
     </Screen>
   );
 }

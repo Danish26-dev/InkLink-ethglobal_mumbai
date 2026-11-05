@@ -131,6 +131,20 @@ export function MockBanner({ text }: { text: string }) {
   );
 }
 
+/** Determinate progress bar; `fraction` is 0..1. */
+export function ProgressBar({ fraction }: { fraction: number }) {
+  const pct = Math.round(Math.max(0, Math.min(1, fraction)) * 100);
+  return (
+    <View
+      accessibilityRole="progressbar"
+      accessibilityValue={{ min: 0, max: 100, now: pct }}
+      style={{ height: 6, borderRadius: 3, backgroundColor: colors.lightGrey, overflow: "hidden", marginVertical: spacing.sm }}
+    >
+      <View style={{ width: `${pct}%`, height: "100%", backgroundColor: colors.ink80 }} />
+    </View>
+  );
+}
+
 /** A thin divider for separating rows. */
 export function Divider() {
   return <View style={styles.divider} />;
