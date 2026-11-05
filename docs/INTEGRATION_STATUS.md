@@ -38,8 +38,8 @@ blockchain settlement (dev rule 8).
 | Module | Status |
 |--------|--------|
 | `packages/shared-schemas` | Contracts, wire format (canonical JSON, Base64URL), authorization, callback headers/event. ESM (`"type":"module"`). |
-| `services/payment-agent` | Bearer auth, device-signature verification, backend-supplied intent, resource allowlist, exact-match x402 policy, mirror-node verification, spend reservation, HMAC callback with retries, x402 gate. **66 tests pass.** |
-| `apps/mobile` | Expo SDK 58. Camera QR scan, real Ed25519 verification, challenge-response pairing, session auth with re-handshake, device key in secure storage, signed authorization, quote with USDC settlement + deadline, 12 screens. **25 tests pass**; typecheck clean; Android and web bundles compile. **Not confirmed on a physical phone.** |
+| `services/payment-agent` | Bearer auth, device-signature verification, backend-supplied intent, resource allowlist, exact-match x402 policy, mirror-node verification, spend reservation, HMAC callback with retries, x402 gate, durable state file with restart recovery (re-verifies claimed transactions, never releases spend when the outcome is unknown, resends undelivered callbacks). **76 tests pass.** |
+| `apps/mobile` | Expo SDK 58. Camera QR scan, real Ed25519 verification, challenge-response pairing, session auth with re-handshake, reconnect to paired shops by pinned key, upload progress with idempotent retry, device key in secure storage, signed authorization, quote with USDC settlement + deadline, 12 screens. **39 tests pass**; typecheck clean; Android and web bundles compile. **Not confirmed on a physical phone.** |
 | `services/mock-gateway` | Mock backend: signed QR, pairing, sessions, FX (mock rate, rounds up), agent calls, callback receiver, gate requirements endpoint. **11 tests pass.** |
 
 ## Verified end to end (no funded wallet)
@@ -63,7 +63,6 @@ Blocky402 facilitator (24 checks, `npm run headless` in `apps/mobile`):
 - **A real funded settlement** — no transaction id, no HashScan proof yet.
 - Gateway TLS + certificate/public-key pinning (production).
 - BLE. OfflinePay. On-device SLM (labelled mock). HCS publishing (backend's).
-- Agent persistence (in-memory today; restart loses state).
 - The real backend/gateway integration (waiting on XYZ's implementation).
 
 ## Open items for XYZ
