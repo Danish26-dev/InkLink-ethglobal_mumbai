@@ -17,3 +17,5 @@ export * from "./contracts.js";
 export * from "./payment-policy.js";
 export * from "./discovery.js";
 export * from "./x402.js";
+export * from "./operator-events.js";
+export * from "./web.js";
