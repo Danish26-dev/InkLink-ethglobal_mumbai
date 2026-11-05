@@ -79,4 +79,12 @@ for (const [name, vp] of [
   await ctx.close();
 }
 await browser.close();
-console.log('done');
+
+const failed = ['desk', 'mob'].filter(
+  (n) => fs.readFileSync(`${out}/${n}-console.txt`, 'utf8') !== 'no errors'
+);
+if (failed.length) {
+  console.error(`console errors or warnings found in: ${failed.join(', ')} (see ${out}/*-console.txt)`);
+  process.exit(1);
+}
+console.log(`done: screenshots in ${out}/, no console errors`);
