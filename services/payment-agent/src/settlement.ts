@@ -75,11 +75,19 @@ export async function verifyOnChain(
   transactionId: string,
   expected: ExpectedTransfer,
 ): Promise<VerifiedSettlement> {
-  const res = await fetch(
-    `${MIRROR_BASE}/transactions/${toMirrorTransactionId(transactionId)}`,
-  );
-  if (!res.ok) return { verified: false };
-  const body = (await res.json()) as { transactions?: MirrorTransaction[] };
+  let body: { transactions?: MirrorTransaction[] };
+  try {
+    const res = await fetch(
+      `${MIRROR_BASE}/transactions/${toMirrorTransactionId(transactionId)}`,
+    );
+    if (!res.ok) return { verified: false };
+    body = (await res.json()) as { transactions?: MirrorTransaction[] };
+  } catch {
+    // A network error says nothing about whether the transfer happened. Treat it as
+    // "not confirmed yet" so the caller retries and, if it never confirms, keeps the
+    // spend reserved. It must never look like "no payment was made".
+    return { verified: false };
+  }
   const match = (body.transactions ?? []).find((tx) => transactionMatches(tx, expected));
   return match
     ? { verified: true, consensusTimestamp: match.consensus_timestamp }

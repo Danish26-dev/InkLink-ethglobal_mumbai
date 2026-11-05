@@ -73,8 +73,13 @@ pairing session.
 
 ## Known limits (honest)
 
-- Agent state (authorizations, nonces, payments, pending callbacks) is **in memory** and lost on
-  restart; persistence is needed before production.
+- Agent state (authorizations, nonces, payments, pending callbacks) is a single JSON file written
+  atomically after every change (`AGENT_STATE_FILE`). It survives restarts, and on startup the agent
+  re-verifies payments that were mid-flight, re-sends undelivered callbacks, and marks payments whose
+  outcome cannot be known as failed **with the spend kept**. It is not a database: one process only,
+  no encryption at rest (it holds no keys), and it needs backups for anything beyond a demo.
+- A corrupt state file stops the agent from starting; it is never silently replaced, because an empty
+  state would reset every spending limit.
 - BLE discovery is not implemented (QR + local Wi-Fi only, per team decision).
 - Local HTTP is unencrypted in development builds; see Transport.
 - Mock gateway FX and device progression are mocks.

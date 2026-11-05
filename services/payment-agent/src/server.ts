@@ -22,6 +22,7 @@ import { fetchSupported, verifySupported } from "./facilitator.js";
 import { PaymentAgent, PaymentError } from "./payment-agent.js";
 import { deliverCallback } from "./settlement.js";
 import { SigningService } from "./signing/signing-service.js";
+import { enablePersistence } from "./store.js";
 import { X402Client } from "./x402-client.js";
 
 function errorBody(code: string, message: string) {
@@ -64,6 +65,12 @@ async function facilitatorReady(): Promise<{ ok: boolean; reason?: string }> {
 function main() {
   // Fail fast: no token / secret, no service.
   const security = loadServerSecurityConfig();
+
+  // Durable state. Throws (and the service refuses to start) if the file is corrupt.
+  const { loaded } = enablePersistence(serviceConfig.stateFile);
+  console.log(
+    `[payment-agent] state ${loaded ? "loaded from" : "created at"} ${serviceConfig.stateFile}`,
+  );
 
   const signing = new SigningService();
   const agent = new PaymentAgent(new X402Client(signing), {
@@ -151,6 +158,19 @@ function main() {
     console.log(`[payment-agent] listening on :${serviceConfig.port} (internal; bearer auth required)`);
     console.log(`[payment-agent] allowed x402 gates: ${security.allowedResourceOrigins.join(", ")}`);
     console.log(`[payment-agent] callback -> ${serviceConfig.backendEventUrl}`);
+    // Resume anything a previous run left half-done. In the background: re-verifying can
+    // take a while and must not delay accepting requests.
+    void agent
+      .recover()
+      .then((s) =>
+        console.log(
+          `[payment-agent] recovery: ${s.reverified} re-verified, ` +
+            `${s.outcomeUnknown} outcome-unknown (spend kept), ${s.callbacksResent} callbacks re-sent`,
+        ),
+      )
+      .catch((err) =>
+        console.error("[payment-agent] recovery failed:", err instanceof Error ? err.message : err),
+      );
     void facilitatorReady().then((f) =>
       console.log(
         f.ok

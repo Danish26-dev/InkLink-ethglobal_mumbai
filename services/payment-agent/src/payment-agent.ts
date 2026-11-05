@@ -58,6 +58,15 @@ export interface AgentOptions {
   verification?: { attempts: number; delayMs: number };
 }
 
+export interface RecoverySummary {
+  /** Payments with a claimed transaction id that were re-checked on the mirror node. */
+  reverified: number;
+  /** In-flight payments with no transaction id: outcome unknown, spend kept. */
+  outcomeUnknown: number;
+  /** Settled payments whose callback had not been delivered and was sent again. */
+  callbacksResent: number;
+}
+
 /** Mirror consensus timestamp "secs.nanos" -> ISO-8601. */
 function consensusToIso(ts: string | undefined): string {
   if (!ts) return new Date().toISOString();
@@ -221,6 +230,7 @@ export class PaymentAgent {
       quoteId: req.quoteId,
       authorizationId: req.authorizationId,
       merchantId: req.merchantId,
+      payTo,
       amount: req.settlementAmount,
       asset: SETTLEMENT_ASSET,
       status: "processing",
@@ -263,10 +273,15 @@ export class PaymentAgent {
     }
   }
 
+  /**
+   * Phase 1: pay the gate. An error here (before any settlement response) means nothing
+   * was submitted, so the reservation is released. Phase 2 (`finalize`) starts only once
+   * a transaction id exists, after which funds may have moved.
+   */
   private async runSettlement(record: PaymentRecord, payTo: string, resourceUrl: string) {
-    const cfg = loadHederaConfig();
+    let settlement: Awaited<ReturnType<X402Client["pay"]>>;
     try {
-      const settlement = await this.x402.pay(
+      settlement = await this.x402.pay(
         resourceUrl,
         { payTo, amount: record.amount },
         {
@@ -279,61 +294,118 @@ export class PaymentAgent {
         },
       );
 
-      if (!settlement.success || !settlement.transaction) {
-        // Facilitator refused: no funds moved, safe to release the reservation.
-        this.fail(record, settlement.errorReason ?? "facilitator_rejected", true);
-        return;
-      }
-
-      // Record the claimed tx id immediately so it can be reconciled even if
-      // verification below is slow or fails.
-      paymentStore.update(record.paymentId, { transactionId: settlement.transaction });
-
-      const verified = await verifyOnChainWithRetry(
-        settlement.transaction,
-        {
-          tokenId: cfg.usdcTokenId,
-          payTo,
-          amountAtomic: toSmallestUnit(record.amount, cfg.usdcDecimals),
-        },
-        this.opts.verification?.attempts,
-        this.opts.verification?.delayMs,
-      );
-
-      if (!verified.verified) {
-        // Funds MAY have moved. Mark failed for the client, but keep the spend
-        // reserved and keep the tx id for manual reconciliation.
-        this.fail(record, "settlement_unverified_on_mirror_node", false);
-        return;
-      }
-
-      const settledAt = consensusToIso(verified.consensusTimestamp);
-      paymentStore.update(record.paymentId, {
-        status: "settled",
-        settlementTimestamp: settledAt,
-        callbackStatus: "pending",
-      });
-
-      const event: PaymentSettledEvent = {
-        paymentId: record.paymentId,
-        jobId: record.jobId,
-        payerAccount: this.opts.payerAccountId,
-        merchantAccountId: payTo,
-        network: "hedera:testnet",
-        asset: "HTS_USDC",
-        amount: record.amount,
-        transactionId: settlement.transaction,
-        settlementTimestamp: settledAt,
-        status: "settled",
-        hashscanUrl: hashscanUrlFor(settlement.transaction),
-      };
-
-      // Background: retries with backoff must never block or undo the settlement.
-      void this.sendCallback(record.paymentId, event);
     } catch (err) {
       // A thrown error before a settlement response means nothing was submitted.
       this.fail(record, err instanceof Error ? err.message : String(err), true);
+      return;
     }
+
+    if (!settlement.success || !settlement.transaction) {
+      // Facilitator refused: no funds moved, safe to release the reservation.
+      this.fail(record, settlement.errorReason ?? "facilitator_rejected", true);
+      return;
+    }
+
+    try {
+      await this.finalize(record, payTo, settlement.transaction);
+    } catch (err) {
+      // A transaction exists, so funds may have moved: never release the spend here.
+      this.fail(record, `finalize_error: ${err instanceof Error ? err.message : String(err)}`, false);
+    }
+  }
+
+  /**
+   * Phase 2: confirm the transfer on the mirror node and, if it is exactly what was
+   * authorized, mark it settled and send the signed callback. Also used to resume after a
+   * restart, so it takes only what is stored on the record.
+   */
+  private async finalize(record: PaymentRecord, payTo: string, transactionId: string) {
+    const cfg = loadHederaConfig();
+
+    // Record the claimed tx id immediately so it can be reconciled even if
+    // verification below is slow or fails.
+    paymentStore.update(record.paymentId, { transactionId });
+
+    const verified = await verifyOnChainWithRetry(
+      transactionId,
+      {
+        tokenId: cfg.usdcTokenId,
+        payTo,
+        amountAtomic: toSmallestUnit(record.amount, cfg.usdcDecimals),
+      },
+      this.opts.verification?.attempts,
+      this.opts.verification?.delayMs,
+    );
+
+    if (!verified.verified) {
+      // Funds MAY have moved. Mark failed for the client, but keep the spend
+      // reserved and keep the tx id so a later recover() can re-check it.
+      this.fail(record, "settlement_unverified_on_mirror_node", false);
+      return;
+    }
+
+    const settledAt = consensusToIso(verified.consensusTimestamp);
+    const event: PaymentSettledEvent = {
+      paymentId: record.paymentId,
+      jobId: record.jobId,
+      payerAccount: this.opts.payerAccountId,
+      merchantAccountId: payTo,
+      network: "hedera:testnet",
+      asset: "HTS_USDC",
+      amount: record.amount,
+      transactionId,
+      settlementTimestamp: settledAt,
+      status: "settled",
+      hashscanUrl: hashscanUrlFor(transactionId),
+    };
+    paymentStore.update(record.paymentId, {
+      status: "settled",
+      failureReason: undefined,
+      settlementTimestamp: settledAt,
+      callbackStatus: "pending",
+      event, // kept so the callback can be re-sent after a restart
+    });
+
+    // Background: retries with backoff must never block or undo the settlement.
+    void this.sendCallback(record.paymentId, event);
+  }
+
+  /**
+   * Run once at startup, after state has been loaded from disk. Never guesses and never
+   * releases spend that may have moved:
+   *  - processing WITH a claimed tx id  -> re-verify it on the mirror node
+   *  - failed as "unverified" with a tx -> re-verify (the mirror node may simply have lagged)
+   *  - processing WITHOUT a tx id       -> outcome unknown: marked failed, spend KEPT for reconciliation
+   *  - settled but callback undelivered -> send the stored callback again
+   */
+  async recover(): Promise<RecoverySummary> {
+    const summary: RecoverySummary = { reverified: 0, outcomeUnknown: 0, callbacksResent: 0 };
+    const work: Promise<unknown>[] = [];
+
+    for (const rec of paymentStore.list()) {
+      const wasUnverified =
+        rec.status === "failed" && rec.failureReason === "settlement_unverified_on_mirror_node";
+
+      if ((rec.status === "processing" || wasUnverified) && rec.transactionId && rec.payTo) {
+        summary.reverified++;
+        const payTo = rec.payTo;
+        const tx = rec.transactionId;
+        work.push(
+          this.finalize(rec, payTo, tx).catch((err) =>
+            this.fail(rec, `finalize_error: ${err instanceof Error ? err.message : String(err)}`, false),
+          ),
+        );
+      } else if (rec.status === "processing") {
+        summary.outcomeUnknown++;
+        this.fail(rec, "interrupted_by_restart_outcome_unknown", false);
+      } else if (rec.status === "settled" && rec.callbackStatus !== "delivered" && rec.event) {
+        summary.callbacksResent++;
+        work.push(this.sendCallback(rec.paymentId, rec.event));
+      }
+    }
+
+    await Promise.all(work);
+    return summary;
   }
 
   private async sendCallback(paymentId: string, event: PaymentSettledEvent) {

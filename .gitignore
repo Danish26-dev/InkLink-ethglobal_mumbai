@@ -53,7 +53,8 @@ Thumbs.db
 coverage/
 .nyc_output/
 
-# Local dev databases
+# Local dev databases and payment agent state
 *.sqlite
 *.sqlite3
 *.db
+.data/

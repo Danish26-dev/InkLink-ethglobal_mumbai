@@ -53,6 +53,11 @@ export const serviceConfig = {
     "http://localhost:8000/api/v1/internal/payment-settled",
   ),
   callbackMaxAttempts: Number(optional("CALLBACK_MAX_ATTEMPTS", "8")),
+  /**
+   * Durable agent state (spent limits, nonces, payments). Keep it OUT of git and out of a
+   * cloud-synced folder (OneDrive/Dropbox can lock files mid-write).
+   */
+  stateFile: optional("AGENT_STATE_FILE", ".data/agent-state.json"),
 };
 
 /** Secrets and trust boundaries for the HTTP service. Fails fast if absent. */
