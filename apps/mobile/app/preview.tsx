@@ -57,12 +57,12 @@ export default function Preview() {
         idempotencyKey: `${job.jobId}:${document.name}`,
         signal: controller.signal,
         onProgress: (p) => {
-          setRetryNote(p.attempt > 1 ? `Retrying (${p.attempt}/${p.maxAttempts})�` : null);
+          setRetryNote(p.attempt > 1 ? `Retrying (${p.attempt}/${p.maxAttempts})…` : null);
           if (p.total > 0) setProgress(p.sent / p.total);
         },
         onRetry: (_n, reason) => {
           setProgress(0);
-          setRetryNote(`${reason}. Retrying�`);
+          setRetryNote(`${reason}. Retrying…`);
         },
       });
       setProgress(null);
@@ -111,7 +111,7 @@ export default function Preview() {
         <Row k="Shop" v={shop?.shopId ?? "—"} />
         <Row k="Document" v={document?.name ?? "—"} />
         <Row k="Copies" v={String(printConfig.copies)} />
-        <Row k="Pages" v={printConfig.pageRange} />
+        <Row k="Pages" v="Whole document" />
         <Row k="Colour" v={labelFor(COLOUR_OPTIONS, printConfig.colourMode)} />
         <Row k="Paper" v={printConfig.paperSize} />
         <Row k="Orientation" v={labelFor(ORIENTATION_OPTIONS, printConfig.orientation)} />

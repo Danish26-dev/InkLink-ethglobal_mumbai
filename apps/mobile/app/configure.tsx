@@ -1,6 +1,6 @@
-// Screen 5 — Print Configuration (copies, page range, colour, paper, orientation, sides)
+// Screen 5 — Print Configuration (copies, colour, paper, orientation, sides; whole document)
 import { useState } from "react";
-import { View, Text, TextInput, StyleSheet, Pressable } from "react-native";
+import { View, Text, StyleSheet, Pressable } from "react-native";
 import { useRouter } from "expo-router";
 import type { PrintConfig } from "@inklink/shared-schemas";
 import { Screen, Heading, Body, Button, Card } from "@/components/ui";
@@ -13,6 +13,7 @@ import {
   SIDES_OPTIONS,
   type Option,
 } from "@/print-options";
+import { MAX_COPIES, clampCopies } from "@/payment-flow";
 
 export default function Configure() {
   const router = useRouter();
@@ -24,7 +25,7 @@ export default function Configure() {
   }
 
   function next() {
-    updateSession({ printConfig: cfg });
+    updateSession({ printConfig: { ...cfg, pageRange: "all", copies: clampCopies(cfg.copies) } });
     router.push("/preview");
   }
 
@@ -33,10 +34,9 @@ export default function Configure() {
       <Heading>Print settings</Heading>
 
       <Card>
-        <Stepper label="Copies" value={cfg.copies} onChange={(v) => set("copies", Math.max(1, v))} />
-        <Field label="Page range">
-          <TextInput value={cfg.pageRange} onChangeText={(t) => set("pageRange", t)} style={styles.inlineInput} />
-        </Field>
+        {/* No page range: the shop prices and prints the whole document, so offering a range
+            would show the customer a choice that is not honoured. */}
+        <Stepper label="Copies" value={cfg.copies} onChange={(v) => set("copies", clampCopies(v))} />
         <Choice label="Colour" options={COLOUR_OPTIONS} value={cfg.colourMode} onChange={(v) => set("colourMode", v)} />
         <Choice label="Paper" options={PAPER_OPTIONS} value={cfg.paperSize} onChange={(v) => set("paperSize", v)} />
         <Choice
@@ -53,25 +53,28 @@ export default function Configure() {
   );
 }
 
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <View style={styles.row}>
-      <Body>{label}</Body>
-      {children}
-    </View>
-  );
-}
-
 function Stepper({ label, value, onChange }: { label: string; value: number; onChange: (v: number) => void }) {
   return (
     <View style={styles.row}>
       <Body>{label}</Body>
       <View style={{ flexDirection: "row", alignItems: "center" }}>
-        <Pressable onPress={() => onChange(value - 1)} style={styles.stepBtn}>
+        <Pressable
+          onPress={() => onChange(value - 1)}
+          disabled={value <= 1}
+          accessibilityRole="button"
+          accessibilityLabel={`Fewer ${label.toLowerCase()}`}
+          style={styles.stepBtn}
+        >
           <Text style={type.heading}>−</Text>
         </Pressable>
-        <Text style={[type.heading, { marginHorizontal: spacing.md }]}>{value}</Text>
-        <Pressable onPress={() => onChange(value + 1)} style={styles.stepBtn}>
+        <Text accessibilityLabel={`${label}: ${value}`} style={[type.heading, { marginHorizontal: spacing.md }]}>{value}</Text>
+        <Pressable
+          onPress={() => onChange(value + 1)}
+          disabled={value >= MAX_COPIES}
+          accessibilityRole="button"
+          accessibilityLabel={`More ${label.toLowerCase()}`}
+          style={styles.stepBtn}
+        >
           <Text style={type.heading}>+</Text>
         </Pressable>
       </View>
@@ -118,16 +121,6 @@ const styles = StyleSheet.create({
     borderRadius: radius.sm,
     padding: spacing.sm,
     marginVertical: spacing.sm,
-    color: colors.inkBlack,
-  },
-  inlineInput: {
-    borderWidth: 1,
-    borderColor: colors.lightGrey,
-    borderRadius: radius.sm,
-    paddingHorizontal: spacing.sm,
-    paddingVertical: 4,
-    minWidth: 80,
-    textAlign: "right",
     color: colors.inkBlack,
   },
   row: {

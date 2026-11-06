@@ -1,5 +1,5 @@
 // Screen 8 — Payment Authorization (explicit approval, signed by the device key)
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { View, Text, StyleSheet, TextInput } from "react-native";
 import { useRouter } from "expo-router";
 import { Screen, Heading, Body, Button, Card, Divider } from "@/components/ui";
@@ -7,6 +7,7 @@ import { colors, radius, spacing, type } from "@/theme";
 import { useApp } from "@/state/app-context";
 import { appConfig } from "@/config";
 import { signPaymentAuthorization } from "@/crypto/device-key";
+import { paymentInProgressFor, quoteExpired } from "@/payment-flow";
 
 /** Smallest whole number of USDC that covers `amount` (display helper for sensible defaults). */
 function ceilWhole(amount: string): string {
@@ -33,13 +34,28 @@ export default function Authorize() {
   const [error, setError] = useState<string | null>(null);
 
   const merchantId = quote?.merchantId ?? session.shop?.shopId ?? "";
-  const expiresAt = new Date(Date.now() + appConfig.authorizationLifetimeMs);
+  // Fixed when the screen opens, so the expiry shown is exactly the one signed.
+  const [expiresAt] = useState(() => new Date(Date.now() + appConfig.authorizationLifetimeMs));
+  // A tap can arrive before React re-renders the button as busy: guard synchronously.
+  const inFlight = useRef(false);
+
+  // Already paying this quote (e.g. Android Back from the status screen): show that payment.
+  const existingPayment = paymentInProgressFor(session, quote?.quoteId);
+  useEffect(() => {
+    if (existingPayment) router.replace("/payment-status");
+  }, [existingPayment, router]);
 
   async function approve() {
     if (!quote || !session.job) {
       setError("Missing quote.");
       return;
     }
+    if (inFlight.current || paymentInProgressFor(session, quote.quoteId)) return;
+    if (quoteExpired(quote)) {
+      setError("This quote has expired. Go back and get a new quote before paying.");
+      return;
+    }
+    inFlight.current = true;
     setBusy(true);
     setError(null);
     try {
@@ -62,11 +78,13 @@ export default function Authorize() {
         authorizationId: auth.authorizationId,
         paymentMethod: "hedera_x402",
       });
-      updateSession({ paymentId: payment.paymentId });
-      router.push("/payment-status");
+      updateSession({ paymentId: payment.paymentId, paidQuoteId: quote.quoteId });
+      // Replace, not push: Back must not return to a live "Approve & sign" button.
+      router.replace("/payment-status");
     } catch (e) {
       setError(e instanceof Error ? e.message : "Could not authorize the payment");
     } finally {
+      inFlight.current = false;
       setBusy(false);
     }
   }

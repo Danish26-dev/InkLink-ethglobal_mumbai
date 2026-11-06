@@ -12,7 +12,7 @@ const TERMINAL: JobStatusResponse["status"][] = ["completed", "cancelled", "fail
 
 export default function Tracking() {
   const router = useRouter();
-  const { session, api } = useApp();
+  const { session, api, resetSession } = useApp();
   const [job, setJob] = useState<JobStatusResponse | null>(null);
 
   useEffect(() => {
@@ -57,7 +57,16 @@ export default function Tracking() {
         <Row k="Device" v={job?.deviceStatus ?? "—"} />
       </Card>
 
-      {done ? <Button label="Done" onPress={() => router.replace("/")} /> : null}
+      {done ? (
+        <Button
+          label="Done"
+          onPress={() => {
+            // Start the next job clean: no old quote, payment or document carried over.
+            resetSession();
+            router.replace("/");
+          }}
+        />
+      ) : null}
       <Button label="View history" variant="secondary" onPress={() => router.push("/history")} />
     </Screen>
   );

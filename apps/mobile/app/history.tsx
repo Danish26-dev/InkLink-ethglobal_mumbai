@@ -4,8 +4,7 @@ import { FlatList, View, Text, Linking, Pressable } from "react-native";
 import { Screen, Heading, Body, Card, Pill } from "@/components/ui";
 import { colors, spacing, type } from "@/theme";
 import { db, type JobRow } from "@/db/database";
-
-const HASHSCAN = "https://hashscan.io/testnet/transaction/";
+import { hashscanTransactionUrl } from "@/payment-flow";
 
 export default function History() {
   const [jobs, setJobs] = useState<JobRow[]>([]);
@@ -38,7 +37,11 @@ export default function History() {
             </Body>
             <Body muted>Payment: {item.paymentStatus}</Body>
             {item.transactionId ? (
-              <Pressable onPress={() => Linking.openURL(`${HASHSCAN}${item.transactionId}`)}>
+              <Pressable
+                accessibilityRole="link"
+                accessibilityLabel="View the transaction on HashScan"
+                onPress={() => Linking.openURL(hashscanTransactionUrl(item.transactionId!))}
+              >
                 <Text style={[type.caption, { color: colors.signalOrange }]}>
                   Tx on HashScan ↗
                 </Text>

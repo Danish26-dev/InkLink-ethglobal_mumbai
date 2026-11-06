@@ -44,6 +44,8 @@ export interface JobSession {
   quote?: Quote;
   authorizationId?: string;
   paymentId?: string;
+  /** The quote `paymentId` pays; Back to the approval screen must not pay it again. */
+  paidQuoteId?: string;
 }
 
 const defaultPrintConfig: PrintConfig = DEFAULT_PRINT_CONFIG;
