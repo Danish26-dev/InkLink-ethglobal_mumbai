@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import time
@@ -15,7 +16,7 @@ from .auth import api_error, issue_session, job_for, native_principal, require_s
 from .clients import ServiceError, call_payment_agent, validate_print_config
 from .config import get_settings
 from .jobs import add_message, pending_gates, quote_contract, quote_expired, try_execute
-from .security import hashscan_for, verify_callback
+from .security import b64url_decode, hashscan_for, verify_callback
 from .store import PaymentRecord, Principal, get_store, iso_from_epoch, new_id, now_iso
 
 router = APIRouter(prefix="/api/v1")
@@ -26,6 +27,28 @@ _B64URL = re.compile(r"^[A-Za-z0-9_-]+$")
 
 class PairingIn(BaseModel):
     challenge: str
+    # Optional, recommended: the app's anonymous Ed25519 device key (Base64URL, raw 32 bytes)
+    # and its signature over the UTF-8 challenge. Proves the same install across pairings, so
+    # jobs the app created stay reachable after its short session is renewed.
+    devicePublicKey: str | None = None
+    deviceSignature: str | None = None
+
+
+def _native_ref(body: PairingIn) -> str:
+    """Stable `native_dev_<fingerprint>` for a proven device key, else a one-off id."""
+    if body.devicePublicKey is None and body.deviceSignature is None:
+        return new_id("native")
+    try:
+        from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+
+        raw = b64url_decode(body.devicePublicKey or "")
+        sig = b64url_decode(body.deviceSignature or "")
+        if len(raw) != 32 or len(sig) != 64:
+            raise ValueError("length")
+        Ed25519PublicKey.from_public_bytes(raw).verify(sig, body.challenge.encode("utf-8"))
+    except Exception as exc:  # noqa: BLE001 - any decode/verify failure is the same answer
+        raise api_error(401, "SIGNATURE_INVALID", "The device signature over the challenge did not verify.") from exc
+    return "native_dev_" + hashlib.sha256(raw).hexdigest()[:24]
 
 
 @router.post("/pairing/verify")
@@ -35,12 +58,15 @@ async def pairing_verify(body: PairingIn, request: Request) -> dict[str, Any]:
         raise api_error(400, "PAIRING_FAILED", "challenge must be a Base64URL string (16-256 chars)")
     s = get_settings()
     identity = request.app.state.identity
-    token, expires = issue_session("native", new_id("native"), s.native_session_ttl_seconds)
+    ref = _native_ref(body)
+    token, expires = issue_session("native", ref, s.native_session_ttl_seconds)
     return {
         "signedChallenge": identity.sign(c),
         "gatewayId": s.gateway_id,
         "sessionToken": token,
         "sessionExpiresAt": iso_from_epoch(expires),
+        # Present only when the device key was proven (never a secret).
+        **({"customerReference": ref} if ref.startswith("native_dev_") else {}),
     }
 
 
