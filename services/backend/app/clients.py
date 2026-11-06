@@ -35,6 +35,7 @@ async def stream_operator_run(
     defaults: dict[str, Any],
     current: dict[str, Any],
     inference: dict[str, Any] | None = None,
+    mode: str = "ai",
 ) -> AsyncIterator[dict[str, Any]]:
     """Yield HarnessEvents from POST /api/operator/runs (NDJSON).
 
@@ -52,6 +53,8 @@ async def stream_operator_run(
     }
     if inference:
         data["inference"] = json.dumps(inference)
+    if mode == "deterministic":
+        data["mode"] = "deterministic"
     files = {"file": (document[0], document[1])} if document else None
     timeout = httpx.Timeout(connect=5.0, read=300.0, write=60.0, pool=5.0)
     try:

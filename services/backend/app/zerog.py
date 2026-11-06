@@ -24,11 +24,14 @@ Keys never leave this module: errors and status objects carry no secret.
 
 from __future__ import annotations
 
+import asyncio
 import time
 from dataclasses import dataclass
 from typing import Any
 
 import httpx
+
+_sleep = asyncio.sleep  # retry back-off; replaced in tests
 
 from .config import TRUST_MODES, get_settings
 
@@ -197,23 +200,47 @@ def sanitize_request(body: dict[str, Any], model: str) -> dict[str, Any]:
     return clean
 
 
-async def chat_completion(mode: str, model: str, body: dict[str, Any]) -> InferenceResult:
-    """One non-streaming call in exactly `mode`. Raises ZeroGError; never retries in another mode."""
+async def _post_once(mode: str, payload: dict[str, Any]) -> httpx.Response:
     s = get_settings()
-    headers = headers_for(mode)
-    payload = sanitize_request(body, model)
-    verify = mode in ("verified", "private")
-    if verify:
-        payload["verify_tee"] = True
+    timeout = httpx.Timeout(connect=10.0, read=s.zero_g_timeout_seconds, write=30.0, pool=10.0)
     try:
-        async with httpx.AsyncClient(timeout=httpx.Timeout(connect=10.0, read=180.0, write=30.0, pool=10.0)) as client:
-            res = await client.post(f"{s.zero_g_base_url}/chat/completions", json=payload, headers=headers)
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            return await client.post(f"{s.zero_g_base_url}/chat/completions", json=payload, headers=headers_for(mode))
     except httpx.TimeoutException as exc:
         raise ZeroGError("ZERO_G_TIMEOUT", f"0G {mode} inference timed out.", 504, True) from exc
     except httpx.HTTPError as exc:
         raise ZeroGError("ZERO_G_UNREACHABLE", "The 0G router is not reachable.", 503, True) from exc
-    if res.status_code != 200:
-        raise _upstream_error(res, mode, model)
+
+
+async def chat_completion(mode: str, model: str, body: dict[str, Any]) -> InferenceResult:
+    """One call in exactly `mode`.
+
+    Retry policy: up to ZERO_G_MAX_RETRIES retries of the SAME mode, SAME key and
+    SAME model on transient failures (429 / 502 / 503 / timeout / unreachable),
+    with exponential backoff (honouring Retry-After on 429). It never retries
+    in another trust mode, with another key or with another model.
+    """
+    s = get_settings()
+    key_for(mode)  # fail fast and clearly when the key is missing
+    payload = sanitize_request(body, model)
+    verify = mode in ("verified", "private")
+    if verify:
+        payload["verify_tee"] = True
+    attempt = 0
+    while True:
+        try:
+            res = await _post_once(mode, payload)
+            if res.status_code == 200:
+                break
+            err = _upstream_error(res, mode, model)
+            retry_after = res.headers.get("retry-after")
+        except ZeroGError as exc:
+            err, retry_after = exc, None
+        if not err.retryable or attempt >= s.zero_g_max_retries:
+            raise err
+        attempt += 1
+        delay = float(retry_after) if retry_after and retry_after.isdigit() else 0.5 * 2 ** attempt
+        await _sleep(min(delay, 10.0))
     try:
         data = res.json()
     except ValueError as exc:

@@ -12,7 +12,9 @@ from fastapi import APIRouter, Depends, File, Form, Header, Request, UploadFile
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
-from . import events
+import hashlib
+
+from . import chain, events
 from .auth import (
     any_principal,
     api_error,
@@ -46,16 +48,24 @@ async def create_web_session() -> dict[str, Any]:
     return {"sessionToken": token, "expiresAt": iso_from_epoch(expires), "customerReference": ref}
 
 
+def visible_shop_ids(principal: Principal) -> list[str]:
+    """Customers see participating shops; only a jury session sees (only) the demo shop."""
+    store = get_store()
+    if principal.kind == "jury":
+        return [get_settings().demo_shop_id] if get_settings().jury_demo_enabled else []
+    return [sid for sid in store.shop_ids() if not store.is_demo_shop(sid)]
+
+
 @router.get("/shops")
-async def list_shops(_: Principal = Depends(any_principal)) -> list[dict[str, Any]]:
-    return [await shop_channel()]
+async def list_shops(principal: Principal = Depends(any_principal)) -> list[dict[str, Any]]:
+    return [await shop_channel(sid) for sid in visible_shop_ids(principal)]
 
 
 @router.get("/shops/{shop_id}")
-async def get_shop(shop_id: str, _: Principal = Depends(any_principal)) -> dict[str, Any]:
-    if shop_id != get_settings().shop_id:
+async def get_shop(shop_id: str, principal: Principal = Depends(any_principal)) -> dict[str, Any]:
+    if shop_id not in visible_shop_ids(principal):
         raise api_error(404, "SHOP_NOT_FOUND", "Unknown shop.")
-    return shop_contract()
+    return shop_contract(shop_id)
 
 
 # ───────────── Contract 3: create job ─────────────
@@ -76,10 +86,9 @@ class CreateJobIn(BaseModel):
 @router.post("/jobs")
 async def create_job(body: CreateJobIn, principal: Principal = Depends(any_principal)) -> dict[str, Any]:
     store = get_store()
-    s = get_settings()
-    if body.shopId != s.shop_id:
+    if body.shopId not in visible_shop_ids(principal):
         raise api_error(404, "SHOP_NOT_FOUND", "Unknown shop.")
-    if not store.shop_config().get("acceptingOrders", True):
+    if not store.shop_config(body.shopId).get("acceptingOrders", True):
         raise api_error(503, "SHOP_UNAVAILABLE", "This shop is not accepting orders right now.")
     now = now_iso()
     job = JobRecord(
@@ -92,9 +101,11 @@ async def create_job(body: CreateJobIn, principal: Principal = Depends(any_princ
     )
     with store.lock:
         store.jobs[job.job_id] = job
-        add_message(job, "system", f"Connected to {store.shop_config()['name']}. Upload a PDF or DOCX and tell the print operator what you need.")
+        add_message(job, "system", f"Connected to {store.shop_config(body.shopId)['name']}. Upload a PDF or DOCX and tell the print operator what you need.")
         store.save()
     events.publish_job_status(job)
+    if not store.is_demo_shop(job.shop_id):
+        chain.queue("job_registered", job.job_id, {"jobCommitment": chain.commitment(job.job_id, job.shop_id), "shopId": job.shop_id})
     return {"jobId": job.job_id, "status": "created", "createdAt": job.created_at}
 
 
@@ -135,6 +146,7 @@ async def upload_document(
         page_count=count_pages(path, fmt),
         # Classified locally, before any content can reach a model.
         classification=classify_document(path, fmt),
+        sha256=hashlib.sha256(data).hexdigest(),
     )
     resp = {"documentId": doc.document_id, "jobId": job.job_id, "filename": filename, "format": fmt, "size": len(data), "status": "uploaded"}
     with store.lock:
@@ -150,6 +162,9 @@ async def upload_document(
         store.touch(job)
         store.save()
     events.publish_job_status(job)
+    if not store.is_demo_shop(job.shop_id):
+        # Hash only: the document itself never goes on-chain.
+        chain.queue("document_committed", job.job_id, {"documentSha256": "0x" + doc.sha256})
     return resp
 
 
@@ -194,6 +209,13 @@ async def post_message(job_id: str, body: MessageIn, principal: Principal = Depe
         store.save()
     start_operator_run(job, text)
     return msg
+
+
+@router.get("/jobs/{job_id}/history")
+async def job_history(job_id: str, principal: Principal = Depends(any_principal)) -> dict[str, Any]:
+    """Audit trail: every event the backend published for this job, in order (same data as the SSE stream)."""
+    job_for(principal, job_id)
+    return {"jobId": job_id, "events": events.history(job_id, 0)}
 
 
 @router.post("/jobs/{job_id}/tickets")

@@ -88,6 +88,11 @@ def router(monkeypatch):
         return real(*args, **kwargs)
 
     monkeypatch.setattr(zerog.httpx, "AsyncClient", client)
+
+    async def no_wait(_seconds):
+        return None
+
+    monkeypatch.setattr(zerog, "_sleep", no_wait)  # retry back-off is instant in tests
     return state
 
 
@@ -166,8 +171,17 @@ def test_no_private_provider_fails_once_and_never_retries_weaker(settings, route
         run(zerog.chat_completion("private", "glm-5.3", {"messages": [{"role": "user", "content": "x"}]}))
     assert exc.value.code == "ZERO_G_NO_PROVIDER_FOR_TRUST_MODE"
     assert "does not fall back" in exc.value.message
-    assert [c["mode"] for c in router["calls"]] == ["private"]
+    # Retries are the SAME mode with the SAME key (1 + ZERO_G_MAX_RETRIES attempts), never weaker.
+    assert [c["mode"] for c in router["calls"]] == ["private"] * (1 + zerog.get_settings().zero_g_max_retries)
     assert all(c["auth"] == f"Bearer {KEYS['private']}" for c in router["calls"])
+
+
+def test_non_retryable_errors_are_not_retried(settings, router):
+    settings(zero_g_keys=KEYS)
+    router["reply"] = lambda req: httpx.Response(401, json={"error": {"code": "invalid_api_key", "message": "bad"}})
+    with pytest.raises(zerog.ZeroGError) as exc:
+        run(zerog.chat_completion("verified", "glm-5.3", {"messages": [{"role": "user", "content": "x"}]}))
+    assert exc.value.code == "ZERO_G_INVALID_API_KEY" and len(router["calls"]) == 1
 
 
 def test_body_routing_overrides_are_stripped(settings, router):

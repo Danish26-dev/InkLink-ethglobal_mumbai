@@ -26,7 +26,10 @@ from fastapi.staticfiles import StaticFiles
 
 from . import zerog
 from .config import get_settings
+from .devices import router as devices_router
 from .inference import router as inference_router
+from .jury import router as jury_router
+from .routes_shop_auth import router as shop_auth_router
 from .retention import retention_loop
 from .routes_native import router as native_router
 from .routes_shop import router as shop_router
@@ -53,7 +56,8 @@ def create_app() -> FastAPI:
             CORSMiddleware,
             allow_origins=s.allowed_origins,
             allow_methods=["GET", "POST", "PUT", "DELETE"],
-            allow_headers=["authorization", "content-type", "idempotency-key", "last-event-id"],
+            allow_headers=["authorization", "content-type", "idempotency-key", "last-event-id", "x-inklink-request", "x-inklink-shop"],
+            allow_credentials=True,
         )
 
     @app.exception_handler(HTTPException)
@@ -90,6 +94,9 @@ def create_app() -> FastAPI:
     app.include_router(native_router)
     app.include_router(shop_router)
     app.include_router(inference_router)
+    app.include_router(shop_auth_router)
+    app.include_router(devices_router)
+    app.include_router(jury_router)
     mount_frontends(app, s)
     return app
 

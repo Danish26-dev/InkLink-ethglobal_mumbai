@@ -47,6 +47,10 @@ def job_view(job: JobRecord) -> dict[str, Any]:
         "executionRequested": job.execution_requested,
         "runActive": job.run_active,
         "submission": job.submission,
+        "demo": get_store().is_demo_shop(job.shop_id),
+        # Jury demo only. Simulated steps are reported separately from real status.
+        "simulation": job.simulation or None,
+        "deviceEvents": job.device_events[-10:],
         "createdAt": job.created_at,
         "updatedAt": job.updated_at,
     }
@@ -81,12 +85,12 @@ def job_status(job: JobRecord) -> dict[str, Any]:
     }
 
 
-def shop_contract() -> dict[str, Any]:
+def shop_contract(shop_id: str | None = None) -> dict[str, Any]:
     """Contract 1."""
     s = get_settings()
-    cfg = get_store().shop_config()
+    cfg = get_store().shop_config(shop_id)
     return {
-        "shopId": s.shop_id,
+        "shopId": cfg["shopId"],
         "gatewayId": s.gateway_id,
         "name": cfg["name"],
         "protocolVersion": "1.0",
@@ -128,14 +132,14 @@ async def agent_status() -> dict[str, Any]:
     }
 
 
-async def shop_channel() -> dict[str, Any]:
-    s = get_settings()
-    cfg = get_store().shop_config()
+async def shop_channel(shop_id: str | None = None) -> dict[str, Any]:
+    cfg = get_store().shop_config(shop_id)
     agent = await agent_status()
     return {
-        "shopId": s.shop_id,
+        "shopId": cfg["shopId"],
         "name": cfg["name"],
         "acceptingOrders": bool(cfg.get("acceptingOrders", True)),
         "agentAvailable": agent["available"],
         "description": cfg.get("description", ""),
+        "demo": cfg["demo"],
     }

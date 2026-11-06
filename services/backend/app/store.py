@@ -50,11 +50,48 @@ def empty_operator_config() -> dict[str, Any]:
 
 @dataclass
 class Principal:
-    """Who holds a token: an anonymous web visitor, a paired native app, or the shop."""
+    """Who is calling.
 
-    kind: str  # "web" | "native" | "shop"
-    ref: str  # web_<…> | native session ref | shop id
+    kind:
+      web    anonymous browser session (customer PWA, no login)
+      native paired Inklink app session
+      shop   shopkeeper (account session cookie, or the SHOP_ADMIN_TOKEN API token)
+      jury   ETHGlobal jury session: a customer of the demo shop AND a
+             read/approve-only viewer of its own demo jobs, nothing else
+    """
+
+    kind: str
+    ref: str  # web_<…> | native ref | account id | "admin" | jury_<…>
     expires_at: float
+    # Shops this principal may act on. ["*"] = every shop (admin API token only).
+    shops: list[str] = field(default_factory=list)
+    role: str = ""  # shop: "owner" | "admin"; jury: "jury"
+    active_shop: str | None = None
+
+
+@dataclass
+class AccountRecord:
+    """A shopkeeper login. The password is stored as an scrypt hash only."""
+
+    account_id: str
+    email: str
+    name: str
+    password_hash: str
+    shop_ids: list[str]
+    role: str = "owner"
+    created_at: str = ""
+    disabled: bool = False
+
+
+@dataclass
+class ShopSession:
+    """Server-side shopkeeper session. Only the SHA-256 of the cookie token is stored."""
+
+    token_hash: str
+    account_id: str
+    created_at: float
+    expires_at: float
+    active_shop: str | None = None
 
 
 @dataclass
@@ -75,6 +112,8 @@ class DocumentRecord:
     classification: dict[str, Any] | None = None
     # Files deleted under the retention policy.
     purged: bool = False
+    # SHA-256 of the original upload: the only document data that may go on-chain.
+    sha256: str | None = None
 
 
 @dataclass
@@ -143,6 +182,11 @@ class JobRecord:
     trust_selection: dict[str, Any] | None = None
     # Metadata of 0G calls for this job (no prompts, no completions).
     inference_log: list[dict[str, Any]] = field(default_factory=list)
+    # Jury demo only: clearly labelled simulated steps (payment, execution).
+    # Never mixed into payment_status / status, never a transaction id.
+    simulation: dict[str, Any] = field(default_factory=dict)
+    # Device-reported events for this job (ESP32-S3 / gateway).
+    device_events: list[dict[str, Any]] = field(default_factory=list)
 
 
 class Store:
@@ -155,10 +199,22 @@ class Store:
         self.handoffs: dict[str, HandoffRecord] = {}
         self.sessions: dict[str, Principal] = {}
         self.events: dict[str, list[dict[str, Any]]] = {}
-        self.shop: dict[str, Any] = {}
+        # Per-shop configuration overrides, keyed by shop id.
+        self.shops: dict[str, dict[str, Any]] = {}
+        self.accounts: dict[str, AccountRecord] = {}
+        self.shop_sessions: dict[str, ShopSession] = {}
+        # Registered devices (ESP32-S3 controllers / gateways), keyed by device id.
+        self.devices: dict[str, dict[str, Any]] = {}
+        # Pending on-chain records (0G Galileo); sent only once contracts are configured.
+        self.chain_outbox: list[dict[str, Any]] = []
         self.upload_keys: dict[str, dict[str, Any]] = {}
         self.consumed_tickets: dict[str, float] = {}
         self._load()
+
+    @property
+    def shop(self) -> dict[str, Any]:
+        """Back-compat: overrides of the primary shop."""
+        return self.shops.setdefault(get_settings().shop_id, {})
 
     # ───────────── persistence ─────────────
     def _load(self) -> None:
@@ -181,7 +237,15 @@ class Store:
             t: Principal(**p) for t, p in raw.get("sessions", {}).items() if p.get("expires_at", 0) > now
         }
         self.events = raw.get("events", {})
-        self.shop = raw.get("shop", {})
+        self.shops = raw.get("shops", {})
+        if raw.get("shop") and get_settings().shop_id not in self.shops:  # migrate single-shop snapshots
+            self.shops[get_settings().shop_id] = raw["shop"]
+        self.accounts = {a["account_id"]: AccountRecord(**a) for a in raw.get("accounts", [])}
+        self.shop_sessions = {
+            s["token_hash"]: ShopSession(**s) for s in raw.get("shop_sessions", []) if s.get("expires_at", 0) > now
+        }
+        self.devices = raw.get("devices", {})
+        self.chain_outbox = raw.get("chain_outbox", [])
         self.upload_keys = raw.get("upload_keys", {})
         # A run cannot survive a restart; never leave a job looking busy.
         for job in self.jobs.values():
@@ -196,7 +260,11 @@ class Store:
                 "handoffs": [asdict(h) for h in self.handoffs.values()],
                 "sessions": {t: asdict(p) for t, p in self.sessions.items()},
                 "events": self.events,
-                "shop": self.shop,
+                "shops": self.shops,
+                "accounts": [asdict(a) for a in self.accounts.values()],
+                "shop_sessions": [asdict(x) for x in self.shop_sessions.values()],
+                "devices": self.devices,
+                "chain_outbox": self.chain_outbox[-500:],
                 "upload_keys": self.upload_keys,
             }
             self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -208,11 +276,31 @@ class Store:
     def touch(self, job: JobRecord) -> None:
         job.updated_at = now_iso()
 
-    def shop_config(self) -> dict[str, Any]:
+    def shop_ids(self) -> list[str]:
+        """Shops served by this backend: the primary shop, the jury demo shop (if enabled)
+        and any shop registered by an operator (store.shops[...]["registered"])."""
         s = get_settings()
+        ids = [s.shop_id]
+        if s.jury_demo_enabled:
+            ids.append(s.demo_shop_id)
+        ids += [k for k, v in self.shops.items() if v.get("registered") and k not in ids]
+        return ids
+
+    def is_demo_shop(self, shop_id: str) -> bool:
+        s = get_settings()
+        return s.jury_demo_enabled and shop_id == s.demo_shop_id
+
+    def shop_config(self, shop_id: str | None = None) -> dict[str, Any]:
+        s = get_settings()
+        shop_id = shop_id or s.shop_id
+        demo = self.is_demo_shop(shop_id)
         cfg = {
-            "name": s.shop_name,
-            "description": s.shop_description,
+            "shopId": shop_id,
+            "demo": demo,
+            "name": "Inklink Demo Print Shop (Jury)" if demo else s.shop_name,
+            "description": "Isolated shop for the ETHGlobal jury demo. Jobs here never print physically."
+            if demo
+            else s.shop_description,
             "pricePerPageMonochrome": s.price_per_page_monochrome,
             "pricePerPageColor": s.price_per_page_color,
             "acceptingOrders": True,
@@ -226,7 +314,8 @@ class Store:
                 "sides": "one-sided",
             },
         }
-        cfg.update(self.shop)
+        cfg.update(self.shops.get(shop_id, {}))
+        cfg["shopId"], cfg["demo"] = shop_id, demo
         return cfg
 
 

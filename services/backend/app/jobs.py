@@ -23,7 +23,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-from . import zerog
+from . import chain, zerog
 from .clients import ServiceError, agent_health, fetch_engine_output, stream_operator_run, submit_print, validate_print_config
 from .config import get_settings
 from .documents import count_pages
@@ -159,7 +159,7 @@ async def prepare_inference(job: JobRecord, run_id: str, instruction: str) -> di
             doc_class=doc_class,
             instruction=instruction,
             customer_requested=job.requested_trust_mode,
-            shop_minimum=store.shop_config().get("minimumTrustMode"),
+            shop_minimum=store.shop_config(job.shop_id).get("minimumTrustMode"),
         )
     except zerog.ZeroGError as exc:
         raise RunRefused(exc.message) from exc
@@ -203,25 +203,39 @@ async def prepare_inference(job: JobRecord, run_id: str, instruction: str) -> di
     }
 
 
-async def run_operator(job_id: str, instruction: str) -> None:
-    """Background task: one print-operator run for a job, relayed as events."""
+async def run_operator(job_id: str, instruction: str, mode: str = "ai") -> None:
+    """Background task: one print-operator run for a job, relayed as events.
+
+    mode="deterministic" (jury demo shop only): the agent runs the SAME real
+    tools with rule-based planning and no model; it is labelled as such in
+    `agent_started` and no document content reaches any model.
+    """
     store = get_store()
     job = store.jobs[job_id]
     run_id = new_id("run")
     inference: dict[str, Any] | None = None
     try:
-        try:
-            inference = await prepare_inference(job, run_id, instruction)
-        except RunRefused as exc:
-            await _handle_harness_event(job, {"type": "agent_finished", "payload": {
-                "runId": run_id, "outcome": "unavailable", "message": f"The print operator did not start: {exc}"}})
-            return
+        if mode == "deterministic":
+            if not store.is_demo_shop(job.shop_id):
+                raise RunRefused("The deterministic fallback operator is only available in the jury demo shop.")
+            with store.lock:
+                job.trust_selection = {"provider": "deterministic-fallback", "model": None, "reason":
+                                       "Jury demo fallback: rule-based planning, no AI inference, no document sent to a model.",
+                                       "requiredTrustMode": None, "effectiveTrustMode": None, "at": now_iso()}
+                store.save()
+        else:
+            try:
+                inference = await prepare_inference(job, run_id, instruction)
+            except RunRefused as exc:
+                await _handle_harness_event(job, {"type": "agent_finished", "payload": {
+                    "runId": run_id, "outcome": "unavailable", "message": f"The print operator did not start: {exc}"}})
+                return
         doc_tuple = None
         if job.document:
             src = working_document_path(job.document)
             if src and src.exists():
                 doc_tuple = (job.document.filename, src.read_bytes())
-        defaults = store.shop_config().get("defaults", {})
+        defaults = store.shop_config(job.shop_id).get("defaults", {})
         finished = False
         async for event in stream_operator_run(
             job_id=job.job_id,
@@ -231,12 +245,16 @@ async def run_operator(job_id: str, instruction: str) -> None:
             defaults=defaults,
             current={k: v for k, v in job.operator_config.items() if v is not None},
             inference=inference,
+            mode=mode,
         ):
             await _handle_harness_event(job, event)
             finished = finished or event.get("type") == "agent_finished"
         if not finished:
             await _handle_harness_event(job, {"type": "agent_finished", "payload": {
                 "runId": run_id, "outcome": "failed", "message": "The print operator stopped before finishing."}})
+    except RunRefused as exc:
+        await _handle_harness_event(job, {"type": "agent_finished", "payload": {
+            "runId": run_id, "outcome": "unavailable", "message": f"The print operator did not start: {exc}"}})
     except ServiceError as exc:
         await _handle_harness_event(job, {"type": "agent_finished", "payload": {
             "runId": run_id,
@@ -252,13 +270,13 @@ async def run_operator(job_id: str, instruction: str) -> None:
         _running.discard(job_id)
 
 
-def start_operator_run(job: JobRecord, instruction: str) -> bool:
+def start_operator_run(job: JobRecord, instruction: str, mode: str = "ai") -> bool:
     """Start a run unless one is already active for the job."""
     if job.job_id in _running:
         return False
     _running.add(job.job_id)
     job.run_active = True
-    asyncio.get_running_loop().create_task(run_operator(job.job_id, instruction))
+    asyncio.get_running_loop().create_task(run_operator(job.job_id, instruction, mode))
     return True
 
 
@@ -292,7 +310,7 @@ def create_quote(job: JobRecord) -> QuoteRecord:
         )
     copies = int(job.operator_config.get("copies") or 1)
     color = job.operator_config.get("colorMode") or "monochrome"
-    cfg = store.shop_config()
+    cfg = store.shop_config(job.shop_id)
     per_page = cfg["pricePerPageColor"] if color == "color" else cfg["pricePerPageMonochrome"]
     inr = inr_price(pages, copies, per_page)
 
@@ -321,6 +339,8 @@ def create_quote(job: JobRecord) -> QuoteRecord:
         store.save()
     publish(job.job_id, "approval_required", {"kind": "customer_quote", "reason": f"Quote {inr} INR is ready for approval."})
     publish_job_status(job)
+    if not store.is_demo_shop(job.shop_id):
+        chain.queue("quote_referenced", job.job_id, {"quoteCommitment": chain.commitment(quote.quote_id, inr, quote.expires_at)})
     return quote
 
 
@@ -372,6 +392,10 @@ async def try_execute(job_id: str) -> dict[str, Any]:
     pending = pending_gates(job)
     if pending:
         return {"state": "pending", "pending": pending}
+    if store.is_demo_shop(job.shop_id):
+        # Hard boundary: the jury demo shop never reaches a physical printer.
+        return {"state": "demo_no_physical_print", "pending": [],
+                "message": "Demo shop: physical printing is disabled. Use the jury demo's simulated execution."}
     if not job.document or job.document.format != "pdf":
         msg = "The printer adapter prints PDF only; DOCX printing needs a PDF rendering step that is not available."
         with store.lock:
@@ -416,5 +440,6 @@ async def try_execute(job_id: str) -> dict[str, Any]:
         store.save()
     if result.get("ok"):
         publish(job_id, "execution_authorized", {"authorizedBy": "backend", "submissionState": result.get("state")})
+        chain.queue("execution_authorized", job_id, {"jobCommitment": chain.commitment(job_id, job.shop_id)})
     publish_job_status(job)
     return {"state": "submitted" if result.get("ok") else "blocked", "pending": [], "message": result.get("message", "")}

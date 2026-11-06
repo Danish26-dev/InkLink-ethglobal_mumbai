@@ -75,6 +75,12 @@ class GatewayIdentity:
     def sign(self, text: str) -> str:
         return b64url_encode(self._key.sign(text.encode("utf-8")))
 
+    def fingerprint(self) -> str:
+        """Short, public identifier of the gateway key (safe to display)."""
+        import hashlib
+
+        return hashlib.sha256(self.public_key.encode()).hexdigest()[:16]
+
 
 def build_qr_payload(
     identity: GatewayIdentity,

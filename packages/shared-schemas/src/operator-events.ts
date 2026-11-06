@@ -93,7 +93,8 @@ export type OperatorEventSource = "agent" | "backend" | "payment" | "device";
 export interface AgentStartedPayload {
   runId: string;
   /** Provider actually used for this run (explicitly configured; never a silent fallback). */
-  provider: "0g-private-computer" | "vertex-ai";
+  /** "deterministic-fallback": jury-demo rule-based planner with the real tools; NOT AI inference. */
+  provider: "0g-private-computer" | "vertex-ai" | "deterministic-fallback";
   model: string;
   /** Privacy mode requested from 0G for every inference call; null for other providers. */
   trustMode: "private" | "verified" | "standard" | null;

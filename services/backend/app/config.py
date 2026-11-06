@@ -108,9 +108,42 @@ class Settings:
     backend_internal_url: str = "http://127.0.0.1:8000"
 
     # The shop dashboard is reachable without a token from this computer only.
-    shop_local_access: bool = True
+    shop_local_access: bool = False
     # Uploaded and edited documents are deleted this long after the last change.
     document_retention_hours: float = 24.0
+
+    zero_g_timeout_seconds: float = 180.0
+    # Retries of the SAME trust mode on transient errors (429/502/503/timeout). Never a weaker mode.
+    zero_g_max_retries: int = 2
+
+    # Shopkeeper accounts (created with `python -m app.manage create-shopkeeper`).
+    shop_session_ttl_seconds: int = 8 * 3600
+    # Set true behind HTTPS so the session cookie is Secure.
+    session_cookie_secure: bool = False
+    login_max_failures: int = 5
+    login_lockout_seconds: int = 900
+
+    # ETHGlobal jury demo: an isolated shop whose jobs can never print physically.
+    jury_demo_enabled: bool = True
+    demo_shop_id: str = "shop_demo"
+    jury_session_ttl_seconds: int = 4 * 3600
+
+    # ESP32-S3 controller / gateway devices report with this bearer token.
+    device_token: str = field(default="", repr=False)
+    device_offline_after_seconds: int = 60
+
+    # 0G Galileo testnet contracts (InklinkShopRegistry, InklinkJobRegistry).
+    galileo_rpc_url: str = ""
+    galileo_chain_id: str = ""
+    shop_registry_address: str = ""
+    job_registry_address: str = ""
+    shop_registry_abi_path: str = ""
+    job_registry_abi_path: str = ""
+    # Backend signer for registry writes (NOT the deployer key; keep it in a secret manager).
+    galileo_signer_private_key: str = field(default="", repr=False)
+
+    # 0G Storage (optional; documents stay off-chain and are never uploaded without this).
+    zero_g_storage_indexer_url: str = ""
 
     # Optional production static serving (single origin): landing + PWA builds.
     landing_dist_dir: str = ""
@@ -138,8 +171,28 @@ def get_settings() -> Settings:
         zero_g_require_tee_verification=_bool("ZERO_G_REQUIRE_TEE_VERIFICATION", True),
         zero_g_catalog_ttl_seconds=int(_env("ZERO_G_CATALOG_TTL_SECONDS", "300")),
         backend_internal_url=_env("BACKEND_INTERNAL_URL", f"http://127.0.0.1:{_env('PORT', '8000')}").rstrip("/"),
-        shop_local_access=_bool("SHOP_LOCAL_ACCESS", True),
+        # Off by default now that shopkeepers log in; opt-in for kiosk setups only.
+        shop_local_access=_bool("SHOP_LOCAL_ACCESS", False),
         document_retention_hours=float(_env("DOCUMENT_RETENTION_HOURS", "24")),
+        zero_g_timeout_seconds=float(_env("ZERO_G_TIMEOUT_SECONDS", "180")),
+        zero_g_max_retries=int(_env("ZERO_G_MAX_RETRIES", "2")),
+        shop_session_ttl_seconds=int(_env("SHOP_SESSION_TTL_SECONDS", str(8 * 3600))),
+        session_cookie_secure=_bool("SESSION_COOKIE_SECURE", False),
+        login_max_failures=int(_env("LOGIN_MAX_FAILURES", "5")),
+        login_lockout_seconds=int(_env("LOGIN_LOCKOUT_SECONDS", "900")),
+        jury_demo_enabled=_bool("JURY_DEMO_ENABLED", True),
+        demo_shop_id=_env("DEMO_SHOP_ID", "shop_demo"),
+        jury_session_ttl_seconds=int(_env("JURY_SESSION_TTL_SECONDS", str(4 * 3600))),
+        device_token=_env("DEVICE_TOKEN"),
+        device_offline_after_seconds=int(_env("DEVICE_OFFLINE_AFTER_SECONDS", "60")),
+        galileo_rpc_url=_env("ZERO_G_GALILEO_RPC_URL"),
+        galileo_chain_id=_env("ZERO_G_GALILEO_CHAIN_ID"),
+        shop_registry_address=_env("INKLINK_SHOP_REGISTRY_ADDRESS"),
+        job_registry_address=_env("INKLINK_JOB_REGISTRY_ADDRESS"),
+        shop_registry_abi_path=_env("INKLINK_SHOP_REGISTRY_ABI_PATH"),
+        job_registry_abi_path=_env("INKLINK_JOB_REGISTRY_ABI_PATH"),
+        galileo_signer_private_key=_env("ZERO_G_GALILEO_SIGNER_PRIVATE_KEY"),
+        zero_g_storage_indexer_url=_env("ZERO_G_STORAGE_INDEXER_URL"),
         landing_dist_dir=_env("LANDING_DIST_DIR"),
         web_dist_dir=_env("WEB_DIST_DIR"),
         port=int(_env("PORT", "8000")),

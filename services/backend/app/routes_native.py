@@ -10,7 +10,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel
 
-from . import events
+from . import chain, events
 from .auth import api_error, issue_session, job_for, native_principal, require_service_token
 from .clients import ServiceError, call_payment_agent, validate_print_config
 from .config import get_settings
@@ -236,6 +236,8 @@ async def payment_settled(request: Request) -> dict[str, Any]:
         events.publish(job.job_id, "payment_status_updated",
                        {"paymentId": rec.payment_id, "status": "settled", "transactionId": tx, "hashscanUrl": rec.hashscan_url}, source="payment")
         events.publish_job_status(job)
+        # Queued only now, after the signed settlement was verified. Reference by hash only.
+        chain.queue("payment_verified", job.job_id, {"hederaTxCommitment": chain.commitment(tx), "network": "hedera:testnet"})
         if not job.shop_approved:
             events.publish(job.job_id, "approval_required", {"kind": "shop", "reason": "Payment verified; the shop must approve printing."})
         await try_execute(job.job_id)
