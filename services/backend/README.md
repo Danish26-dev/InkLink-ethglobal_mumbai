@@ -82,3 +82,40 @@ with your shell or a process manager).
   when payments are configured.
 - **Single process:** state is in memory with a JSON snapshot in `DATA_DIR`;
   run one backend instance.
+
+## 0G Private Computer (three trust modes)
+
+The backend is the only component that holds 0G credentials. Put them in `services/backend/.env` (see `.env.example`), never in a frontend env:
+
+```env
+ZERO_G_BASE_URL=https://router-api.0g.ai/v1
+ZERO_G_STANDARD_API_KEY=
+ZERO_G_VERIFIED_API_KEY=
+ZERO_G_PRIVATE_API_KEY=
+ZERO_G_DEFAULT_TRUST_MODE=private
+ZERO_G_MODEL_ID=glm-5.3
+```
+
+How a run is decided (`app/sensitivity.py`, `app/zerog.py`, `app/inference.py`):
+
+1. **On upload**, the document is classified locally (PDF text via pypdf, DOCX XML). Only labels and counts are stored, never matched values or text.
+2. **Required mode:**
+   - Sensitive (personal, financial, identity, confidential) → `private`.
+   - Unclassifiable (no readable text) → `private`.
+   - Non-sensitive → `standard`.
+   - No document attached → `ZERO_G_DEFAULT_TRUST_MODE`.
+3. **Effective mode** = strictest of the required mode, the customer's choice (`PUT /jobs/{id}/privacy`, or words like "private" / "verifiable" in the instruction) and the shop minimum (`minimumTrustMode`). It can be raised, never lowered.
+4. **Preflight**, before anything is sent:
+   - The key for exactly that mode must exist. Another mode's key is never used.
+   - The model must be in the live 0G catalog with a qualifying tier: `private` needs `TeeML`; `verified` needs `TeeML` or `TeeTLS`. It must also support tool calling.
+   - If any check fails, the run does not start, and nothing is sent to the agent or to 0G.
+5. **Grant.** The agent receives a short-lived grant for this backend's gateway (`/api/v1/internal/inference/v1`), not a 0G key.
+6. **Each call through the gateway:**
+   - It uses that mode's key and `X-0G-Provider-Trust-Mode: <mode>`.
+   - The model is pinned and body-level `provider` overrides are stripped.
+   - For `verified`/`private` it sets `verify_tee: true` and requires `x_0g_trace.tee_verified == true`; otherwise the output is discarded.
+   - `503 no_provider_for_trust_mode` is reported as is. There is no retry in a weaker mode.
+
+Call metadata (mode, model, provider address, request id, `teeVerified`) is kept per job in `inference_log`, with no prompts and no completions.
+
+Documents: the original upload is never modified. An edited copy waits in `pending_review` until the customer approves (`POST /jobs/{id}/document/approve`) or rejects it (`.../reject`, which deletes the copy). Files are deleted `DOCUMENT_RETENTION_HOURS` after the job's last change. Paid jobs waiting to print, or printing, are kept.

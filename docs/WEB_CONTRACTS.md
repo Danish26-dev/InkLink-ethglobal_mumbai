@@ -14,7 +14,9 @@ Types: `packages/shared-schemas/src/web.ts`. Additive to API Contracts 1–8. Al
 | GET/POST | `/jobs/{id}/messages` | web owner | POST starts a print-operator run; 409 while a run is active |
 | POST | `/jobs/{id}/tickets` | web owner / shop | single-use 60 s ticket for SSE and document preview |
 | GET | `/jobs/{id}/document?ticket=&version=original\|current` | ticket | preview / download |
-| POST | `/jobs/{id}/quote` | web owner | Contract 4; requires a validated config and a real page count |
+| PUT | `/jobs/{id}/privacy` | web owner | `{ requestedTrustMode: standard\|verified\|private\|null }`; can only make 0G inference stricter |
+| POST | `/jobs/{id}/document/approve` / `reject` | web owner | accept or discard the operator's edited copy; the original is never modified |
+| POST | `/jobs/{id}/quote` | web owner | Contract 4; requires a validated config, a real page count and no edit awaiting review |
 | POST | `/jobs/{id}/quote/approve` | web owner | returns a `PaymentHandoff`; 409 `FACILITATOR_UNSUPPORTED` when payments are not configured |
 
 ## Payment handoff to the native app
@@ -40,6 +42,12 @@ Gap: the Expo app does not handle `inklink://pay` or this QR type yet.
 | GET | `/shop/printers` (live discovery via the printer adapter) |
 | GET/PUT | `/shop/config` (name, description, INR per-page prices) |
 | GET | `/shop/pairing-qr` (signed shop QR, 1 h) |
+| GET | `/shop/hardware` (printer adapter, printers, jobs at the printer) |
+| GET | `/shop/payments` (payments recorded; `settled` only from a verified callback) |
+
+On the shop computer itself (loopback, with no forwarded non-local client) the shop endpoints work without a token while `SHOP_LOCAL_ACCESS=true`. Requests from any other device need the token.
+
+`JobView.privacy` carries the trust-mode decision and 0G call metadata (mode, model, provider address, request id, `teeVerified`). It never contains keys, prompts or completions.
 
 ## Execution gate
 

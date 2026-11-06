@@ -3,15 +3,28 @@
 ## Start
 
 ```powershell
-.\scripts\dev-stack.ps1                      # 0G Private Computer (needs ZEROG_API_KEY, ZEROG_MODEL_ID in services/strands-agent/.env)
-.\scripts\dev-stack.ps1 -Provider vertex-ai  # explicit alternative provider
+.\scripts\dev-stack.ps1                      # 0G Private Computer (keys in services/backend/.env)
+.\scripts\dev-stack.ps1 -Provider vertex-ai  # explicit alternative; refused for sensitive documents
 ```
 
-The script opens the customer app at http://localhost:5174/ and the shop dashboard at http://localhost:5174/shop, and prints the shop admin token.
+Everything is served from one origin, http://localhost:5173:
+
+| URL | What |
+|---|---|
+| `/` | Landing page |
+| `/app` | Customer app (no login, no wallet) |
+| `/app/chat/:shopId` | Conversation with a shop |
+| `/app/jobs` | Order tracking |
+| `/shop` | Shop dashboard (no token needed on the shop computer itself) |
+| `/shop/jobs` | Incoming orders |
+| `/shop/agent` | Agent Workspace |
+| `/shop/hardware` | Printer adapter and printers |
+| `/shop/payments` | Hedera x402 payments |
+| `/demo` | This walkthrough with live system checks |
 
 ## Walkthrough (about 3 minutes)
 
-1. **Customer, no login.** Open http://localhost:5174/ on a phone-sized window. Pick the shop. No account and no wallet are needed.
+1. **Customer, no login.** Open http://localhost:5173/app on a phone-sized window. Pick the shop. No account and no wallet are needed.
 2. **Upload and instruct.** Attach a PDF, then send: `2 copies, black and white, A4, double-sided`.
 3. **Agent Workspace.** Tap *Watch operator*. The operator's cursor opens each printer control and selects the value the tool asked for. Every motion maps to a real event in the stream at the bottom:
    - `tool_started` opens the menu;
@@ -28,7 +41,7 @@ The script opens the customer app at http://localhost:5174/ and the shop dashboa
 | # | Scenario | How | Expected |
 |---|---|---|---|
 | 1 | Happy configuration | PDF + "2 copies, black and white, A4, double-sided" | all six controls set, validated, execution requested; gates show what is pending |
-| 2 | Provider unavailable | start without `ZEROG_*` | banner "Print operator unavailable", `agent_finished: unavailable`, no tool events, no settings changed |
+| 2 | Provider unavailable | start without `ZERO_G_*_API_KEY` | banner "Print operator unavailable", `agent_finished: unavailable`, no tool events, no settings changed |
 | 3 | Offline printer | ask for a printer that is offline | `check_printer_readiness` fails with `PRINTER_UNAVAILABLE`; the printer is not selected |
 | 4 | Change after validation | send "make it 3 copies" | copies change, validation is cleared and re-run, the previous quote is withdrawn |
 | 5 | Shop paused | toggle *Accepting orders* off | the shop list shows "Not accepting orders"; new jobs get 503 `SHOP_UNAVAILABLE` |

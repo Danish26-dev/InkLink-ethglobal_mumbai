@@ -22,7 +22,7 @@ GET  /api/v1/jobs/{jobId}/events?ticket=<ticket>&after=<lastSeq>               (
 
 | type | source | emitted when |
 |---|---|---|
-| `agent_started` | agent | a run starts; carries the provider actually used, model and 0G trust mode |
+| `agent_started` | agent | a run starts; carries the provider, model, the 0G trust mode used and `trustSelection` (required / requested / effective, reason) |
 | `agent_thinking` | agent | customer-visible model text (not hidden reasoning) |
 | `tool_started` | agent | an allowlisted tool is invoked, with its validated input |
 | `configuration_updated` | agent | a setter changed a value (after validation), before its `tool_succeeded` |
@@ -40,10 +40,12 @@ GET  /api/v1/jobs/{jobId}/events?ticket=<ticket>&after=<lastSeq>               (
 
 - A control value changes only on `configuration_updated`. A success mark appears only on `tool_succeeded`.
 - Any `configuration_updated` invalidates an earlier validation.
-- Provider unavailable (no `ZEROG_API_KEY` / `ZEROG_MODEL_ID`, or unreachable): the run emits `agent_finished` with `outcome: "unavailable"` and no tool events. There is no silent fallback to another provider.
+- If the run cannot start (the key for the selected trust mode is missing, the model can't serve that mode, or the agent is unreachable), it emits `agent_finished` with `outcome: "unavailable"` and no tool events. Nothing is sent to the agent or to 0G. There is no fallback to a weaker mode or another provider.
+- `approval_required` with `kind: "document_review"` means the operator produced an edited copy that the customer must approve or reject before pricing.
 - `executing` means the spooler accepted the job, not that it printed. Only the shop marks a job `completed`.
 
 ## Agent ↔ backend
 
-- Backend → agent: `POST /api/operator/runs` (multipart, bearer `AGENT_SERVICE_TOKEN`), streaming NDJSON `HarnessEvent`s. The backend assigns `seq`, `jobId` and `source`.
+- Backend → agent: `POST /api/operator/runs` (multipart, bearer `AGENT_SERVICE_TOKEN`), streaming NDJSON `HarnessEvent`s. The backend assigns `seq`, `jobId` and `source`. The `inference` field carries a per-run grant `{baseUrl, token, model, trustMode}` for the backend's 0G gateway. The agent holds no 0G key.
+- Agent → backend (model calls): `POST /api/v1/internal/inference/v1/chat/completions`, bearer = grant. The backend calls 0G with that mode's key and `X-0G-Provider-Trust-Mode`.
 - Agent → backend: `POST /api/v1/internal/jobs/{jobId}/execution-requests`. The agent has no print tool. The backend re-validates the config with the printer adapter and prints only when every gate is met.
