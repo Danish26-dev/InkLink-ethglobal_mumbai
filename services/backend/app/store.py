@@ -1,7 +1,8 @@
 """Authoritative backend state.
 
 One process owns every job. State lives in memory and is written atomically to
-DATA_DIR/state.json after each mutation, so a restart (or `--reload`) keeps
+DATA_DIR/state.json after each mutation (or at most once per
+STATE_SAVE_INTERVAL_SECONDS when that is set), so a restart (or `--reload`) keeps
 jobs, quotes, payments, sessions and event logs. This is the single source of
 truth for job status: other services propose, this store decides.
 """
@@ -209,6 +210,9 @@ class Store:
         self.chain_outbox: list[dict[str, Any]] = []
         self.upload_keys: dict[str, dict[str, Any]] = {}
         self.consumed_tickets: dict[str, float] = {}
+        self._dirty = False
+        self._flusher: threading.Thread | None = None
+        self._stop_flusher = threading.Event()
         self._load()
 
     @property
@@ -252,6 +256,39 @@ class Store:
             job.run_active = False
 
     def save(self) -> None:
+        """Persist the snapshot.
+
+        With STATE_SAVE_INTERVAL_SECONDS > 0 (used on Cloud Run, where DATA_DIR is a
+        Cloud Storage volume and every write is an object upload) mutations only mark
+        the store dirty and a background thread writes at most once per interval.
+        `flush()` runs on shutdown so a graceful stop never loses the last changes.
+        """
+        interval = get_settings().state_save_interval_seconds
+        if interval <= 0:
+            self._write()
+            return
+        with self.lock:
+            self._dirty = True
+            if self._flusher is None or not self._flusher.is_alive():
+                self._flusher = threading.Thread(target=self._flush_loop, args=(interval,),
+                                                 name="state-flusher", daemon=True)
+                self._flusher.start()
+
+    def flush(self) -> None:
+        """Write the snapshot now if anything changed since the last write."""
+        with self.lock:
+            if not self._dirty:
+                return
+            self._write()
+
+    def _flush_loop(self, interval: float) -> None:
+        while not self._stop_flusher.wait(interval):
+            try:
+                self.flush()
+            except OSError:
+                pass  # transient storage error: still dirty, retried next tick
+
+    def _write(self) -> None:
         with self.lock:
             data = {
                 "jobs": [asdict(j) for j in self.jobs.values()],
@@ -271,6 +308,12 @@ class Store:
             tmp = self.path.with_suffix(".tmp")
             tmp.write_text(json.dumps(data), encoding="utf-8")
             os.replace(tmp, self.path)
+            self._dirty = False
+
+    def close(self) -> None:
+        """Stop the background writer and write any pending changes (graceful shutdown)."""
+        self._stop_flusher.set()
+        self.flush()
 
     # ───────────── helpers ─────────────
     def touch(self, job: JobRecord) -> None:

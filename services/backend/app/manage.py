@@ -31,6 +31,31 @@ def _password() -> str:
     return first
 
 
+def bootstrap_shopkeeper_from_env() -> str | None:
+    """Create the first shopkeeper on a server without a shell (Cloud Run).
+
+    BOOTSTRAP_SHOPKEEPER_EMAIL / _NAME / _SHOPS and BOOTSTRAP_SHOPKEEPER_PASSWORD
+    (a Secret Manager secret). Runs at startup; does nothing when the variables are
+    unset or the account already exists, so an existing password is never replaced.
+    Returns the created account id (for logging), else None.
+    """
+    email = os.environ.get("BOOTSTRAP_SHOPKEEPER_EMAIL", "").strip().lower()
+    password = os.environ.get("BOOTSTRAP_SHOPKEEPER_PASSWORD", "")
+    if not email or not password:
+        return None
+    store = get_store()
+    if any(a.email == email for a in store.accounts.values()):
+        return None
+    name = os.environ.get("BOOTSTRAP_SHOPKEEPER_NAME", "").strip() or "Shop owner"
+    wanted = [s.strip() for s in os.environ.get("BOOTSTRAP_SHOPKEEPER_SHOPS", "").split(",") if s.strip()]
+    shops = [s for s in (wanted or store.shop_ids()) if s in store.shop_ids()]
+    acct = new_account(email, name, password, shops, "owner")  # ValueError on a weak password
+    with store.lock:
+        store.accounts[acct.account_id] = acct
+        store.save()
+    return acct.account_id
+
+
 def main(argv: list[str] | None = None) -> None:
     p = argparse.ArgumentParser(prog="python -m app.manage")
     sub = p.add_subparsers(dest="cmd", required=True)

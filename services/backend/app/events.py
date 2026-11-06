@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
+from . import gateway_relay
 from .store import MAX_EVENTS_PER_JOB, get_store, now_iso
 
 # Fields that never leave the backend (internal service identifiers).
@@ -34,6 +35,7 @@ def publish(job_id: str, type_: str, payload: dict[str, Any], source: str = "bac
             queue.put_nowait(event)
         except asyncio.QueueFull:
             pass  # slow client; it resumes from the log with Last-Event-ID
+    gateway_relay.on_event(event)  # status for the shop's ESP32 display (relay mode only)
     return event
 
 

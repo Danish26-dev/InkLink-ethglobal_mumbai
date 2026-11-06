@@ -16,7 +16,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel, Field
 
-from . import chain, devices, events
+from . import chain, devices, events, gateway_relay
 from .auth import active_shop, api_error, job_for, shop_owner, shop_principal
 from .clients import ServiceError, list_printers
 from .config import TRUST_MODES, get_settings
@@ -166,7 +166,9 @@ async def hardware(request: Request, principal: Principal = Depends(shop_princip
     active = [j for j in _visible_jobs(principal, shop_id) if j.status in ("awaiting_execution", "executing")]
     return {
         "gateway": {"gatewayId": s.gateway_id, "fingerprint": request.app.state.identity.fingerprint(), "status": "online"},
-        "printerAdapter": {**(await _printers()), "url": s.printer_agent_url},
+        "printerAdapter": {**(await _printers()),
+                           "url": "shop gateway relay" if s.printer_mode == "relay" else s.printer_agent_url,
+                           "relay": gateway_relay.status()},
         "devices": devices.device_views(shop_id),
         "jobs": [
             {"jobId": j.job_id, "status": j.status, "deviceStatus": j.device_status,
@@ -223,5 +225,6 @@ async def pairing_qr(request: Request, principal: Principal = Depends(shop_owner
         port=s.port,
         ip=s.gateway_ip or None,
         ttl_seconds=3600,
+        cloud_origin=s.public_api_origin or None,
     )
     return {"qrText": json.dumps(payload, separators=(",", ":")), "expiresAt": payload["expiresAt"]}

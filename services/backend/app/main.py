@@ -15,6 +15,7 @@ Browsers receive job events over SSE: GET /api/v1/jobs/{jobId}/events.
 from __future__ import annotations
 
 import asyncio
+import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -24,9 +25,14 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import zerog
+from . import gateway_relay, zerog
 from .config import get_settings
 from .devices import router as devices_router
+from .manage import bootstrap_shopkeeper_from_env
+from .store import get_store
+
+# uvicorn configures this logger (INFO to stdout -> Cloud Logging).
+log = logging.getLogger("uvicorn.error")
 from .inference import router as inference_router
 from .jury import router as jury_router
 from .routes_shop_auth import router as shop_auth_router
@@ -39,17 +45,26 @@ from .security import GatewayIdentity
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
+    try:
+        created = bootstrap_shopkeeper_from_env()
+        if created:
+            log.info("Created the bootstrap shopkeeper account %s", created)
+    except ValueError as exc:  # e.g. a password below the minimum length
+        log.warning("Bootstrap shopkeeper not created: %s", exc)
     task = asyncio.create_task(retention_loop())
     try:
         yield
     finally:
         task.cancel()
+        # Graceful shutdown (Cloud Run sends SIGTERM): release long-polls, write pending state.
+        gateway_relay.shutdown()
+        get_store().close()
 
 
 def create_app() -> FastAPI:
     s = get_settings()
     app = FastAPI(title="Inklink Backend", version="0.1.0", lifespan=lifespan)
-    app.state.identity = GatewayIdentity.load_or_create(s.data_dir / "gateway_ed25519.key")
+    app.state.identity = GatewayIdentity.load_configured(s)
 
     if s.allowed_origins:
         app.add_middleware(
@@ -82,6 +97,7 @@ def create_app() -> FastAPI:
             "ok": True,
             "service": "inklink-backend",
             "paymentsConfigured": s.payments_configured,
+            "printer": gateway_relay.status(),
             "zeroG": {"defaultTrustMode": zg["defaultTrustMode"],
                       "modes": {m: v["configured"] for m, v in zg["modes"].items()}},
         }
@@ -97,6 +113,7 @@ def create_app() -> FastAPI:
     app.include_router(shop_auth_router)
     app.include_router(devices_router)
     app.include_router(jury_router)
+    app.include_router(gateway_relay.router)
     mount_frontends(app, s)
     return app
 
