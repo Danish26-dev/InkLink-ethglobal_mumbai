@@ -24,7 +24,15 @@ from pathlib import Path
 from typing import Any
 
 from . import chain, zerog
-from .clients import ServiceError, agent_health, fetch_engine_output, stream_operator_run, submit_print, validate_print_config
+from .clients import (
+    ServiceError,
+    agent_health,
+    fetch_engine_output,
+    list_printers,
+    stream_operator_run,
+    submit_print,
+    validate_print_config,
+)
 from .config import get_settings
 from .documents import count_pages
 from .events import publish, publish_job_status
@@ -49,6 +57,32 @@ def contract_print_config(op: dict[str, Any]) -> dict[str, Any]:
         "pageRange": "all",
         "colourMode": "grayscale" if op.get("colorMode") == "monochrome" else "colour",
         "paperSize": op.get("paperSize") or "A4",
+    }
+
+
+def is_native_job(job: JobRecord) -> bool:
+    """Created by a paired Inklink app (Contracts 1-8), not by the web app or the jury."""
+    return job.owner.startswith("native_")
+
+
+def customer_operator_config(job: JobRecord) -> dict[str, Any]:
+    """The native app's explicit print options (Contract 3) in the printer adapter's vocabulary.
+
+    The app has no print operator conversation: what the customer picked is the configuration.
+    Anything left unset falls back to the shop defaults. The printer itself is chosen, and the
+    whole configuration validated against the live printer, only right before printing.
+    """
+    pc = job.print_config or {}
+    defaults = get_store().shop_config(job.shop_id).get("defaults") or {}
+    colour = pc.get("colourMode")
+    return {
+        "printerId": job.operator_config.get("printerId"),
+        "paperSize": pc.get("paperSize") or defaults.get("paperSize") or "A4",
+        "colorMode": "color" if colour == "colour" else "monochrome" if colour == "grayscale"
+        else defaults.get("colorMode") or "monochrome",
+        "copies": int(pc.get("copies") or defaults.get("copies") or 1),
+        "orientation": pc.get("orientation") or defaults.get("orientation") or "portrait",
+        "sides": pc.get("sides") or defaults.get("sides") or "one-sided",
     }
 
 
@@ -293,6 +327,13 @@ def create_quote(job: JobRecord) -> QuoteRecord:
     store = get_store()
     if not job.document:
         raise QuoteError("UPLOAD_FAILED", "Upload a document before requesting a quote.")
+    if not job.config_validated and is_native_job(job):
+        # Native-only flow: price exactly what the customer chose in the app.
+        with store.lock:
+            job.operator_config = customer_operator_config(job)
+            job.config_validated = True
+            store.touch(job)
+            store.save()
     if not job.config_validated:
         raise QuoteError("POLICY_VIOLATION", "The print configuration has not been validated yet.", 409)
     if job.document.edit_status == "pending_review":
@@ -381,6 +422,15 @@ def pending_gates(job: JobRecord) -> list[str]:
     return pending
 
 
+def default_online_printer(discovery: dict[str, Any]) -> str | None:
+    """The default printer if it is online, else the first online one (adapter /printers body)."""
+    printers = [p for p in discovery.get("printers") or [] if isinstance(p, dict) and p.get("id")]
+    online = [p for p in printers if p.get("status") == "online"]
+    default = discovery.get("defaultPrinter")
+    chosen = next((p for p in online if p.get("isDefault") or p.get("id") == default), None) or next(iter(online), None)
+    return str(chosen["id"]) if chosen else None
+
+
 async def try_execute(job_id: str) -> dict[str, Any]:
     """Submit the job to the printer adapter if, and only if, every gate is satisfied."""
     store = get_store()
@@ -403,6 +453,19 @@ async def try_execute(job_id: str) -> dict[str, Any]:
             store.save()
         publish(job_id, "printer_readiness_updated", {"printerId": job.operator_config.get("printerId"), "status": "unknown", "available": False})
         return {"state": "blocked", "pending": ["printable_document"], "message": msg}
+
+    if not job.operator_config.get("printerId"):
+        # Native-only jobs never named a printer: use the shop's default online printer, the
+        # same choice the print operator makes. Never invent one.
+        try:
+            printer_id = default_online_printer(await list_printers())
+        except ServiceError as exc:
+            return {"state": "blocked", "pending": ["printer"], "message": exc.message}
+        if not printer_id:
+            return {"state": "blocked", "pending": ["printer"], "message": "No online printer was found at the shop."}
+        with store.lock:
+            job.operator_config = {**job.operator_config, "printerId": printer_id}
+            store.save()
 
     # Re-validate against the live printer right before submitting.
     try:

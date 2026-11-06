@@ -6,7 +6,7 @@ import asyncio
 import json
 import time
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, File, Form, Header, Request, UploadFile
 from fastapi.responses import FileResponse, StreamingResponse
@@ -72,10 +72,15 @@ async def get_shop(shop_id: str, principal: Principal = Depends(any_principal)) 
 # ───────────── Contract 3: create job ─────────────
 
 class PrintConfigIn(BaseModel):
+    """Contract 3. The native app's choices are priced and printed as given, so only the
+    printer adapter's supported values are accepted (mapped to its vocabulary in jobs.py)."""
+
     copies: int = Field(1, ge=1, le=999)
-    pageRange: str = "all"
-    colourMode: str = "grayscale"
-    paperSize: str = "A4"
+    pageRange: str = Field("all", max_length=64)
+    colourMode: Literal["grayscale", "colour"] = "grayscale"
+    paperSize: Literal["A4", "Letter", "Legal"] = "A4"
+    orientation: Literal["portrait", "landscape"] | None = None
+    sides: Literal["one-sided", "two-sided-long-edge", "two-sided-short-edge"] | None = None
 
 
 class CreateJobIn(BaseModel):

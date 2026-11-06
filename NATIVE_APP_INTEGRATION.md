@@ -73,6 +73,14 @@ A job is priced on the approved document.
 **5. Pay:** `POST /jobs/{id}/quote` → Contract 5 authorization → `POST /payments`. For a job the app
 created itself, its signed payment request is the quote approval (no web step).
 
+Steps 3 and 4 are optional. Without an operator run, a job the app created is priced and printed
+from the `printConfig` it sent in step 2: `copies` 1–999, `colourMode` `grayscale|colour`,
+`paperSize` `A4|Letter|Legal`, `orientation` `portrait|landscape`, `sides`
+`one-sided|two-sided-long-edge|two-sided-short-edge` (anything else is `400`; unset fields use the
+shop defaults). The verified settlement is then the print request. The shop's default online
+printer is used, the config is validated against it right before printing, and the shop must still
+approve the job.
+
 Access is per job: the app sees only jobs it created or claimed through a web handoff.
 
 ## Builds

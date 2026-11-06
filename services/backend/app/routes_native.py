@@ -15,7 +15,7 @@ from . import chain, events
 from .auth import api_error, issue_session, job_for, native_principal, require_service_token
 from .clients import ServiceError, call_payment_agent, validate_print_config
 from .config import get_settings
-from .jobs import add_message, pending_gates, quote_contract, quote_expired, try_execute
+from .jobs import add_message, is_native_job, pending_gates, quote_contract, quote_expired, try_execute
 from .security import b64url_decode, hashscan_for, verify_callback
 from .store import PaymentRecord, Principal, get_store, iso_from_epoch, new_id, now_iso
 
@@ -298,6 +298,10 @@ async def payment_settled(request: Request) -> dict[str, Any]:
         if job:
             job.payment_status = "settled"
             job.status = "awaiting_execution"  # payment authorizes execution; it does NOT complete the job
+            if is_native_job(job):
+                # The app has no print operator: the customer's device-signed, verified payment
+                # for this exact configuration is the print request. Every other gate still applies.
+                job.execution_requested = True
             add_message(job, "system", "Payment verified on Hedera. Waiting for the shop to print.")
             store.touch(job)
         store.save()

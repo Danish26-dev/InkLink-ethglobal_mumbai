@@ -127,3 +127,118 @@ def test_native_cannot_touch_another_customers_job(client):
     hdr = native(pair(client, key, pub))
     assert client.post(f"/api/v1/jobs/{job_id}/messages", json={"text": "hi"}, headers=hdr).status_code == 404
     assert client.post(f"/api/v1/jobs/{job_id}/document/approve", headers=hdr).status_code == 404
+
+
+# ───────────── native-only flow: the app's print options are the configuration ─────────────
+
+from tests.test_flow import SHOP, printer, settle  # noqa: E402,F401  (fixture + helpers)
+
+from app import routes_native  # noqa: E402
+
+APP_OPTIONS = {"copies": 2, "pageRange": "all", "colourMode": "colour", "paperSize": "Letter",
+               "orientation": "landscape", "sides": "two-sided-short-edge"}
+
+
+def native_job(client, hdr, options=APP_OPTIONS, pages=3) -> str:
+    """Exactly what apps/mobile does: create the job with its printConfig, then upload."""
+    job = client.post("/api/v1/jobs", json={"shopId": "shop_001", "printConfig": options}, headers=hdr)
+    assert job.status_code == 200, job.text
+    job_id = job.json()["jobId"]
+    up = client.post("/api/v1/documents", headers={**hdr, "Idempotency-Key": f"{job_id}:a.pdf"},
+                     data={"jobId": job_id, "shopId": "shop_001", "customerId": "native_dev_x"},
+                     files={"file": ("a.pdf", pdf_bytes(pages), "application/pdf")})
+    assert up.status_code == 200, up.text
+    return job_id
+
+
+def test_native_job_is_quoted_from_the_options_chosen_in_the_app(client):
+    key, pub = device()
+    hdr = native(pair(client, key, pub))
+    job_id = native_job(client, hdr)
+
+    q = client.post(f"/api/v1/jobs/{job_id}/quote", headers=hdr)
+    assert q.status_code == 200, q.text
+    # 3 pages x 2 copies x 10.00 INR (colour) = 60.00 INR @ 0.005 USDC/INR
+    assert q.json()["amount"] == "60.00" and q.json()["settlement"]["amount"] == "0.30"
+    assert get_store().jobs[job_id].operator_config == {
+        "printerId": None, "paperSize": "Letter", "colorMode": "color", "copies": 2,
+        "orientation": "landscape", "sides": "two-sided-short-edge",
+    }
+
+    # Unset options fall back to the shop defaults (monochrome, A4, portrait, one-sided).
+    plain = native_job(client, hdr, options={"copies": 1}, pages=2)
+    assert client.post(f"/api/v1/jobs/{plain}/quote", headers=hdr).json()["amount"] == "4.00"
+    assert get_store().jobs[plain].operator_config == {
+        "printerId": None, "paperSize": "A4", "colorMode": "monochrome", "copies": 1,
+        "orientation": "portrait", "sides": "one-sided",
+    }
+
+
+def test_native_print_options_outside_the_printer_vocabulary_are_refused(client):
+    hdr = native(pair(client, *device()))
+    for bad in ({"colourMode": "sepia"}, {"paperSize": "A3"}, {"sides": "duplex"}, {"orientation": "up"}, {"copies": 1000}):
+        r = client.post("/api/v1/jobs", json={"shopId": "shop_001", "printConfig": {"copies": 1, **bad}}, headers=hdr)
+        assert r.status_code == 400, (bad, r.text)
+
+
+def test_web_jobs_still_need_the_print_operator_to_validate(client):
+    web = {"authorization": f"Bearer {client.post('/api/v1/web/sessions').json()['sessionToken']}"}
+    job_id = new_job_with_pdf(client, web)
+    assert client.post(f"/api/v1/jobs/{job_id}/quote", headers=web).status_code == 409
+
+
+def test_native_job_pays_then_prints_on_the_default_printer_after_shop_approval(client, printer, monkeypatch):
+    async def fake_agent(method, path, body=None):
+        assert path == "/api/v1/payments" and body["settlementAmount"] == "0.30"
+        return 200, {"paymentId": "payment_n1", "status": "processing", "paymentMethod": "hedera_x402"}
+
+    async def printers():
+        return {"ok": True, "defaultPrinter": "Front Desk",
+                "printers": [{"id": "Back Office", "status": "online", "isDefault": False},
+                             {"id": "Front Desk", "status": "online", "isDefault": True}]}
+
+    monkeypatch.setattr(routes_native, "call_payment_agent", fake_agent)
+    monkeypatch.setattr(jobs_mod, "list_printers", printers)
+    hdr = native(pair(client, *device()))
+    job_id = native_job(client, hdr)
+    quote = client.post(f"/api/v1/jobs/{job_id}/quote", headers=hdr).json()
+
+    pay = client.post("/api/v1/payments", json={"jobId": job_id, "quoteId": quote["quoteId"], "authorizationId": "auth_1",
+                                                 "paymentMethod": "hedera_x402"}, headers=hdr)
+    assert pay.status_code == 200, pay.text
+    assert get_store().jobs[job_id].execution_requested is False  # not before a verified payment
+
+    assert settle(client, job_id, "payment_n1", "0.30").status_code == 200
+    job = get_store().jobs[job_id]
+    assert job.status == "awaiting_execution" and job.execution_requested is True
+    assert printer["submit"] == []  # the shop has not approved yet
+
+    r = client.post(f"/api/v1/shop/jobs/{job_id}/approve", headers=SHOP).json()
+    assert r["execution"]["state"] == "submitted", r
+    assert len(printer["submit"]) == 1
+    config, _ = printer["submit"][0]
+    assert config == {"printerId": "Front Desk", "paperSize": "Letter", "colorMode": "color", "copies": 2,
+                      "orientation": "landscape", "sides": "two-sided-short-edge"}
+    assert get_store().jobs[job_id].status == "executing"
+
+
+def test_native_job_waits_when_no_printer_is_online(client, printer, monkeypatch):
+    async def fake_agent(method, path, body=None):
+        return 200, {"paymentId": "payment_n2", "status": "processing", "paymentMethod": "hedera_x402"}
+
+    async def printers():
+        return {"ok": True, "defaultPrinter": "Front Desk", "printers": [{"id": "Front Desk", "status": "offline", "isDefault": True}]}
+
+    monkeypatch.setattr(routes_native, "call_payment_agent", fake_agent)
+    monkeypatch.setattr(jobs_mod, "list_printers", printers)
+    hdr = native(pair(client, *device()))
+    job_id = native_job(client, hdr)
+    quote = client.post(f"/api/v1/jobs/{job_id}/quote", headers=hdr).json()
+    client.post("/api/v1/payments", json={"jobId": job_id, "quoteId": quote["quoteId"], "authorizationId": "auth_1",
+                                          "paymentMethod": "hedera_x402"}, headers=hdr)
+    assert settle(client, job_id, "payment_n2", quote["settlement"]["amount"]).status_code == 200
+
+    r = client.post(f"/api/v1/shop/jobs/{job_id}/approve", headers=SHOP).json()
+    assert r["execution"]["state"] == "blocked" and r["execution"]["pending"] == ["printer"]
+    assert printer["submit"] == []
+    assert get_store().jobs[job_id].operator_config["printerId"] is None  # never invented
