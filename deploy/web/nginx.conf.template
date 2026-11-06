@@ -27,8 +27,10 @@ server {
     gzip_types text/css application/javascript application/json image/svg+xml application/manifest+json;
     gzip_min_length 1024;
 
-    # Liveness of this container only (does not call the backend).
-    location = /healthz {
+    # Liveness of this container only (does not call the backend). /healthz is used by the
+    # in-container HEALTHCHECK and Cloud Run probes, but Google's front end reserves public
+    # paths ending in "z" (it answers 404 itself), so /health is the public check.
+    location ~ ^/(healthz|health)$ {
         access_log off;
         default_type text/plain;
         return 200 "ok\n";

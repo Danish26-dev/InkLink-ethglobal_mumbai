@@ -27,7 +27,8 @@ for svc in "${SVC_ENGINE}" "${SVC_AGENT}" "${SVC_BACKEND}" "${SVC_WEB}"; do
 done
 
 step "Public endpoints"
-check "web /healthz" 200 "${WEB_URL}/healthz"
+# Not /healthz: Google's front end reserves public paths ending in "z" (404 before the container).
+check "web /health" 200 "${WEB_URL}/health"
 check "web landing /" 200 "${WEB_URL}/"
 check "web /portal (PWA route)" 200 "${WEB_URL}/portal"
 check "web /shop/login (PWA route)" 200 "${WEB_URL}/shop/login"
