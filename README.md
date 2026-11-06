@@ -100,17 +100,28 @@ facilitator, which pays the network fee. There is no checkout page, no signup an
 
 ### Proof (real Hedera testnet transactions)
 
+**Full cloud flow, nothing mocked.** The app's own API client and device-key signing, against
+the deployed Cloud Run backend, payment agent and x402 gate:
+
 | What | Hedera reference |
 |---|---|
-| **Agent discovered the endpoint, read the 402 price, then paid** 0.10 USDC | [`0.0.7162784@1793979232.670687781`](https://hashscan.io/testnet/transaction/0.0.7162784@1793979232.670687781) |
-| Its spend-audit entry (HCS topic, sequence #4) | [topic `0.0.11339168`](https://hashscan.io/testnet/topic/0.0.11339168) |
-| x402 payment, 0.10 USDC agent → shop (audit entry #1) | [`0.0.7162784@1793967953.517115964`](https://hashscan.io/testnet/transaction/0.0.7162784@1793967953.517115964) |
-| Earlier x402 payment, 0.10 USDC | [`0.0.7162784@1793916490.190691897`](https://hashscan.io/testnet/transaction/0.0.7162784@1793916490.190691897) |
+| **Print job paid end to end on the cloud**: backend quote (2.00 INR = 0.024 USDC), device-signed budget, agent discovered the endpoint, read the 402 price, paid, verified, signed callback delivered | [`0.0.7162784@1793992647.222766103`](https://hashscan.io/testnet/transaction/0.0.7162784-1793992647-222766103) (job `job_382a9a8becee`, HCS entry #7) |
+| First cloud payment, same flow | [`0.0.7162784@1793986272.588926799`](https://hashscan.io/testnet/transaction/0.0.7162784-1793986272-588926799) (job `job_1b50094f0bb9`, HCS entry #5) |
+
+**Agent runs** (`npm run demo:pay`: dev device key, fixed 0.10 USDC price, stand-in shop account):
+
+| What | Hedera reference |
+|---|---|
+| Agent discovered the endpoint, read the 402 price, then paid 0.10 USDC (HCS entry #4) | [`0.0.7162784@1793979232.670687781`](https://hashscan.io/testnet/transaction/0.0.7162784-1793979232-670687781) |
+| Payment after the concurrency fixes (HCS entry #6) | [`0.0.7162784@1793990131.418337454`](https://hashscan.io/testnet/transaction/0.0.7162784-1793990131-418337454) |
+| x402 payment, 0.10 USDC agent → shop (HCS entry #1) | [`0.0.7162784@1793967953.517115964`](https://hashscan.io/testnet/transaction/0.0.7162784-1793967953-517115964) |
+| First x402 payment, 0.10 USDC | [`0.0.7162784@1793916490.190691897`](https://hashscan.io/testnet/transaction/0.0.7162784-1793916490-190691897) |
+| Spend-audit log (every entry above) | [topic `0.0.11339168`](https://hashscan.io/testnet/topic/0.0.11339168) |
 
 All are `SUCCESS` on the mirror node. Asset: HTS USDC `0.0.429274`. Agent wallet
-`0.0.11330279`, shop wallet `0.0.11227614`, facilitator fee payer `0.0.7162784`. These runs used
-`npm run demo:pay` with a dev device key, a fixed 0.10 USDC price and a stand-in shop account; the
-same agent code is what the Inklink backend calls in the full flow.
+`0.0.11330279`, shop wallet `0.0.11227614`, facilitator fee payer `0.0.7162784` (Blocky402).
+Anyone can check a payment: `curl https://testnet.mirrornode.hedera.com/api/v1/transactions/<tx id with dashes>`
+shows the exact USDC transfer, and the HCS topic shows the matching audit entry.
 
 ### Architecture
 
@@ -155,7 +166,11 @@ Phone app ──signed budget──▶ Inklink backend ──bearer token──�
 ### Spending controls
 
 - A budget that the customer signs on the device (Ed25519), so it can't be forged or replayed.
-- A per-payment maximum and a total limit, reserved before signing, so parallel payments can't overspend.
+- A per-payment maximum and a total limit, checked and reserved in one step with no wait in
+  between, so two payments at the same time can't together exceed the limit, and a retried request
+  returns the same payment instead of paying twice (tests in `test/payment-races.test.ts`).
+- Once a transfer has been signed, any later error keeps the spend reserved and marks that funds
+  may have moved. The budget is only freed when nothing was signed or the facilitator refused.
 - A shop allowlist, plus an allowlist of x402 endpoints the agent may pay.
 - An exact-match rule: the agent refuses any 402 that differs from the quoted amount, shop account
   or asset. Live proof: `npm run demo:pay -- --negative`. The gate charged 0.10, the agent was told
@@ -174,6 +189,41 @@ After every verified payment, the agent appends one message to its HCS topic
   (`spentToDate` / `totalSpendingLimit`).
 - **No customer data.** Jobs and budgets appear only as SHA-256 commitments.
 
+### OfflinePay: pay later with a signed promise
+
+When the shop can't settle right away, the customer taps **Pay later (OfflinePay)** in the app.
+The phone signs a voucher with its device key: a promise to pay exactly this job's backend-quoted
+USDC amount, to this shop, valid 30 minutes. It is **not a payment** until it settles.
+
+- **Limits enforced on the phone, the backend and the agent:** 2.00 USDC per promise, 5.00
+  unsettled per device across all shops, one promise per job, no replay.
+- **Settled through the same x402 path:** the backend asks the agent to settle
+  (`POST /api/v1/offline-payments/settle`). The agent checks the voucher again, reads the 402
+  price, pays through Blocky402 and verifies on the mirror node.
+- **"Paid" only when verified:** the app shows "Paid on Hedera" only after the backend reports a
+  mirror-node verified transaction. If the outcome is unknown, it shows "settling" and nobody
+  retries, so it is never charged twice.
+
+Code: `packages/shared-schemas/src/offline-pay.ts`, `apps/mobile/app/offline-pay.tsx`,
+`services/payment-agent/src/offline-settlement.ts`, backend `services/backend/app/offline_pay.py`.
+OfflinePay is built and tested on all three sides but has not yet settled a voucher live.
+
+### Built on Hedera's x402 standard
+
+| Hedera x402 docs | Inklink |
+|---|---|
+| Exact scheme, `x402Version: 2`, `hedera:testnet` | Same. The agent refuses any other scheme, version or network |
+| Amounts in the token's smallest unit | USDC in 6-decimal units, compared as exact integers |
+| The facilitator is the fee payer and submits a partially signed `TransferTransaction` | Official `@x402/hedera` scheme; Blocky402 fee payer `0.0.7162784` (checked on `/supported` before paying) |
+| The client account must hold and be associated with the token | `npm run setup:wallet -- --associate` |
+| payTo aliases can trigger auto account creation | We always pay a plain account ID, so this never happens |
+| No native privacy on the ledger | HCS audit entries contain only SHA-256 commitments, never documents or personal data |
+
+**Known tradeoff:** we use one facilitator, Blocky402, with no fallback (a team decision for a
+predictable demo). Hedera's docs list relying on few facilitators as a risk; the official
+`x402.org` facilitator and Launa also support `hedera:testnet`, so adding a fallback is a
+contained change in `src/facilitator.ts`.
+
 ### Setup and reproduce
 
 Needs Node 20+ and a Hedera testnet ECDSA account (free at https://portal.hedera.com/).
@@ -188,7 +238,7 @@ npm run setup:wallet                  # until it says "Ready"
 npm run setup:audit-topic             # once; put the printed id in HCS_AUDIT_TOPIC_ID
 npm run demo:pay                      # real x402 payment; prints the HashScan links
 npm run demo:pay -- --negative        # the agent refuses an amount that does not match
-npm test                              # 106 tests, no network needed
+npm test                              # 114 tests, no network needed
 ```
 
 The shop account must also have USDC associated. For a stand-in shop that you control, run
