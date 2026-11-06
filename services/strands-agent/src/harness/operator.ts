@@ -22,6 +22,7 @@ import { buildTools, type DocumentContext } from '../tools/documentTools.js';
 import { toAgentError } from '../errors.js';
 import { buildOperatorTools, emitEvent, type OperatorRunContext } from './operatorTools.js';
 import { installOperatorHooks } from './hooks.js';
+import { runDeterministicOperator } from './deterministic.js';
 
 export const OPERATOR_SYSTEM_PROMPT = `You are the Inklink print operator at a print shop. You configure a real printer for the customer's job by calling tools, exactly like a person clicking through printer preferences.
 
@@ -62,6 +63,8 @@ export interface OperatorRunRequest {
   current?: Partial<OperatorPrintConfig>;
   /** Backend-issued 0G inference grant (trust mode chosen by the backend's policy). */
   inference?: InferenceGrant | null;
+  /** "deterministic": jury demo fallback, rule-based planning with the real tools (no AI). */
+  mode?: 'ai' | 'deterministic';
   emit: (event: HarnessEvent) => void;
 }
 
@@ -82,6 +85,12 @@ export async function runPrintOperator(req: OperatorRunRequest): Promise<void> {
     printers: null,
     emit: req.emit,
   };
+
+  if (req.mode === 'deterministic') {
+    const doc: DocumentContext | null = req.document ? { fileBuffer: req.document.buffer, filename: req.document.filename } : null;
+    await runDeterministicOperator({ ctx, instruction: req.instruction, defaults: req.defaults, doc });
+    return;
+  }
 
   const status = providerStatus();
   if (!status.available) {

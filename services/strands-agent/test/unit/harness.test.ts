@@ -367,3 +367,44 @@ test('operator run endpoint refuses wrong tokens and refuses to run without a co
     await new Promise((r) => srv.close(r));
   }
 });
+
+/* ───────────── deterministic fallback (jury demo, no AI) ───────────── */
+
+import { planFromInstruction, runDeterministicOperator } from '../../src/harness/deterministic.js';
+
+test('deterministic planner parses the jury example and keeps defaults for the rest', () => {
+  const p = planFromInstruction('Print this document in A4, black and white, two copies, double-sided.', {});
+  assert.deepEqual(
+    { paper: p.paperSize, color: p.colorMode, copies: p.copies, duplex: p.duplex },
+    { paper: 'A4', color: 'monochrome', copies: 2, duplex: { enabled: true, binding: 'long-edge' } },
+  );
+  const q = planFromInstruction('3 copies in colour, landscape, short edge duplex', { paperSize: 'Letter' });
+  assert.equal(q.copies, 3);
+  assert.equal(q.colorMode, 'color');
+  assert.equal(q.orientation, 'landscape');
+  assert.equal(q.paperSize, 'Letter');
+  assert.deepEqual(q.duplex, { enabled: true, binding: 'short-edge' });
+  assert.equal(planFromInstruction('single-sided please', {}).duplex.enabled, false);
+});
+
+test('deterministic run uses the real tools, is labelled as no-AI, and events reflect real results', async () => {
+  const events: HarnessEvent[] = [];
+  const ctx = newCtx(events);
+  ctx.runId = 'run_det';
+  await runDeterministicOperator({ ctx, instruction: 'A4, black and white, two copies, double-sided', defaults: {}, doc: null });
+  const started = events[0];
+  assert.ok(started.type === 'agent_started' && started.payload.provider === 'deterministic-fallback' && started.payload.trustMode === null);
+  const tools = events.filter((e) => e.type === 'tool_started').map((e) => (e as any).payload.tool);
+  assert.deepEqual(tools, ['list_printers', 'check_printer_readiness', 'set_paper_size', 'set_color_mode', 'set_copies',
+    'set_orientation', 'set_duplex', 'validate_print_config', 'request_print_execution']);
+  // Every started tool has exactly one result event; a configuration change precedes its success.
+  for (const id of events.filter((e) => e.type === 'tool_started').map((e) => (e as any).payload.toolUseId)) {
+    const results = events.filter((e) => (e.type === 'tool_succeeded' || e.type === 'tool_failed') && (e as any).payload.toolUseId === id);
+    assert.equal(results.length, 1);
+  }
+  assert.equal(ctx.config.copies, 2);
+  assert.equal(ctx.config.sides, 'two-sided-long-edge');
+  assert.equal(ctx.config.printerId, 'Office Laser'); // the adapter's default online printer, not invented
+  const last = events[events.length - 1];
+  assert.ok(last.type === 'agent_finished' && last.payload.outcome === 'completed');
+});

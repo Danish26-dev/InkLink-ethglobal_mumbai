@@ -84,6 +84,7 @@ router.post('/runs', upload.single('file'), async (req: Request, res: Response) 
       current: parseConfig(req.body?.current),
       // Per-run 0G inference grant from the backend (no 0G key); null if absent or invalid.
       inference: parseGrant(req.body?.inference),
+      mode: req.body?.mode === 'deterministic' ? 'deterministic' : 'ai',
       emit,
     });
   } catch {
