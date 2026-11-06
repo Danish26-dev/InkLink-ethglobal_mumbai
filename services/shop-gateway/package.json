@@ -1,0 +1,12 @@
+{
+  "name": "inklink-shop-gateway",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Inklink shop gateway connector: connects a cloud-hosted Inklink backend to the shop's local printer adapter through outbound HTTPS only, and serves a read-only status endpoint for the ESP32-S3 display.",
+  "type": "module",
+  "engines": { "node": ">=22" },
+  "scripts": {
+    "start": "node --env-file-if-exists=.env src/index.mjs",
+    "test": "node --test \"test/*.test.mjs\""
+  }
+}
