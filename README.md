@@ -102,11 +102,12 @@ facilitator, which pays the network fee. There is no checkout page, no signup an
 
 | What | Hedera reference |
 |---|---|
-| x402 payment, 0.10 USDC agent → shop | [`0.0.7162784@1793967953.517115964`](https://hashscan.io/testnet/transaction/0.0.7162784@1793967953.517115964) |
-| Its spend-audit entry (HCS topic, sequence #1) | [topic `0.0.11339168`](https://hashscan.io/testnet/topic/0.0.11339168) |
+| **Agent discovered the endpoint, read the 402 price, then paid** 0.10 USDC | [`0.0.7162784@1793979232.670687781`](https://hashscan.io/testnet/transaction/0.0.7162784@1793979232.670687781) |
+| Its spend-audit entry (HCS topic, sequence #4) | [topic `0.0.11339168`](https://hashscan.io/testnet/topic/0.0.11339168) |
+| x402 payment, 0.10 USDC agent → shop (audit entry #1) | [`0.0.7162784@1793967953.517115964`](https://hashscan.io/testnet/transaction/0.0.7162784@1793967953.517115964) |
 | Earlier x402 payment, 0.10 USDC | [`0.0.7162784@1793916490.190691897`](https://hashscan.io/testnet/transaction/0.0.7162784@1793916490.190691897) |
 
-All three are `SUCCESS` on the mirror node. Asset: HTS USDC `0.0.429274`. Agent wallet
+All are `SUCCESS` on the mirror node. Asset: HTS USDC `0.0.429274`. Agent wallet
 `0.0.11330279`, shop wallet `0.0.11227614`, facilitator fee payer `0.0.7162784`. These runs used
 `npm run demo:pay` with a dev device key, a fixed 0.10 USDC price and a stand-in shop account; the
 same agent code is what the Inklink backend calls in the full flow.
@@ -127,16 +128,21 @@ Phone app ──signed budget──▶ Inklink backend ──bearer token──�
 - **Payment agent** (`services/payment-agent/src/server.ts`): internal service. It holds the only
   wallet key (in `signing/signing-service.ts`; never sent to the app or an LLM).
 - **x402 gate** (`src/gate-server.ts`, `src/x402-gate.ts`): `POST /api/v1/jobs/{jobId}/execute`
-  answers 402 with the job's price, asked from the backend per job.
-- **Official x402 packages**: `@x402/core`, `@x402/fetch`, `@x402/express` and `@x402/hedera`.
+  answers 402 with the job's price, asked from the backend per job. `GET /discovery/resources`
+  publishes the endpoint as an x402 Bazaar resource list. The 402 itself also carries the
+  official Bazaar extension, which describes how to call the endpoint.
+- **Official x402 packages**: `@x402/core`, `@x402/fetch`, `@x402/express`, `@x402/hedera` and
+  `@x402/extensions` (Bazaar).
 
 ### Payment flow (no human approves the payment)
 
 1. The customer approves a **budget** once in the app: a per-payment maximum, a total limit, one
    shop and an expiry. The phone signs it with its Ed25519 device key.
 2. The backend asks the agent to pay for one job, with the backend-quoted USDC amount.
-3. The agent calls the shop's x402 endpoint and gets **402** with the price, pay-to account and
-   asset.
+3. **The agent finds the paid endpoint itself.** It reads the gate's x402 discovery document
+   (`/discovery/resources`, Bazaar format) and builds the job's URL from the listed route.
+   Then it calls the endpoint without paying and **reads the price from the 402**: amount,
+   pay-to account and asset.
 4. The agent checks everything: the signed budget, the shop allowlist, the per-payment and total
    limits, the quote expiry, and that the 402 price is **exactly** the quoted amount, pay-to
    account and asset. It reserves the amount, then signs.
@@ -182,7 +188,7 @@ npm run setup:wallet                  # until it says "Ready"
 npm run setup:audit-topic             # once; put the printed id in HCS_AUDIT_TOPIC_ID
 npm run demo:pay                      # real x402 payment; prints the HashScan links
 npm run demo:pay -- --negative        # the agent refuses an amount that does not match
-npm test                              # 92 tests, no network needed
+npm test                              # 100 tests, no network needed
 ```
 
 The shop account must also have USDC associated. For a stand-in shop that you control, run

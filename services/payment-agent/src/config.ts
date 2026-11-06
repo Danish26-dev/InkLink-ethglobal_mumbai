@@ -64,6 +64,12 @@ export const serviceConfig = {
    * Unset = audit log off; payments work the same either way.
    */
   auditTopicId: optional("HCS_AUDIT_TOPIC_ID", "") || null,
+  /**
+   * x402 gate whose discovery document the agent reads to find the paid endpoint itself
+   * (`<origin>/discovery/resources`). Must also be in ALLOWED_RESOURCE_ORIGINS. Unset = the
+   * caller supplies resourceUrl (still checked against the allowlist and the job route).
+   */
+  gateDiscoveryOrigin: optional("X402_GATE_ORIGIN", "").replace(/\/+$/, "") || null,
   /** OfflinePay voucher ledger. Defaults to the same directory as the agent state file. */
   offlineLedgerFile: optional(
     "OFFLINE_LEDGER_FILE",

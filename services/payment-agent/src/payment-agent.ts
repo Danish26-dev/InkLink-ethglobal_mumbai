@@ -45,6 +45,7 @@ import {
 } from "./settlement.js";
 import { X402Client } from "./x402-client.js";
 import { buildSpendAuditMessage, type AuditPublisher } from "./hcs-audit.js";
+import { discoverPrintJobEndpoint, quoteFromGate } from "./gate-discovery.js";
 
 const SETTLEMENT_ASSET = "USDC";
 
@@ -60,6 +61,13 @@ export interface AgentOptions {
   verification?: { attempts: number; delayMs: number };
   /** Optional HCS spend audit log. Runs after settlement; never affects the payment. */
   audit?: AuditPublisher;
+  /**
+   * Endpoint discovery and price reading. With `discoveryOrigin`, the agent finds the job's
+   * paid endpoint from the gate's published x402 discovery document (and refuses a different
+   * URL from the caller). With `probePrice`, it reads the 402 price before signing and
+   * refuses anything but the exact authorized amount, shop account and asset.
+   */
+  gate?: { discoveryOrigin?: string; probePrice?: boolean; fetchImpl?: typeof fetch };
 }
 
 export interface RecoverySummary {
@@ -255,6 +263,25 @@ export class PaymentAgent {
       throw new PaymentError("AUTHORIZATION_INVALID", "Unknown authorizationId");
     }
 
+    // Find the paid endpoint ourselves rather than trusting the caller's URL.
+    let resourceUrl = req.resourceUrl;
+    const discoveryOrigin = this.opts.gate?.discoveryOrigin;
+    if (discoveryOrigin) {
+      let discovered: string;
+      try {
+        discovered = await discoverPrintJobEndpoint(discoveryOrigin, req.jobId, this.opts.gate?.fetchImpl);
+      } catch (err) {
+        throw new PaymentError("RESOURCE_NOT_ALLOWED", `Endpoint discovery failed: ${err instanceof Error ? err.message : String(err)}`);
+      }
+      if (resourceUrl && resourceUrl !== discovered) {
+        throw new PaymentError("RESOURCE_NOT_ALLOWED", "resourceUrl differs from the endpoint the gate publishes for this job");
+      }
+      resourceUrl = discovered;
+    }
+    if (!resourceUrl) {
+      throw new PaymentError("RESOURCE_NOT_ALLOWED", "No resourceUrl given and endpoint discovery is not configured");
+    }
+
     const cfg = loadHederaConfig();
 
     // ── Everything from here to the reservation is synchronous on purpose. ──
@@ -277,7 +304,7 @@ export class PaymentAgent {
       throw new PaymentError("QUOTE_EXPIRED", "The quote has expired; request a new quote");
     }
 
-    this.assertResourceAllowed(req.resourceUrl, req.jobId);
+    this.assertResourceAllowed(resourceUrl, req.jobId);
 
     const check = checkPolicy(
       policy,
@@ -320,7 +347,7 @@ export class PaymentAgent {
     paymentStore.put(record, idemKey);
 
     // Run the x402 settlement out-of-band; status is polled via Contract 7.
-    void this.runSettlement(record, payTo, req.resourceUrl);
+    void this.runSettlement(record, payTo, resourceUrl);
 
     return { paymentId, status: "processing", paymentMethod: req.paymentMethod };
   }
@@ -359,6 +386,33 @@ export class PaymentAgent {
   private async runSettlement(record: PaymentRecord, payTo: string, resourceUrl: string) {
     let settlement: Awaited<ReturnType<X402Client["pay"]>>;
     try {
+      if (this.opts.gate?.probePrice) {
+        // Read the endpoint's own price first (unpaid request -> 402) and compare it with what
+        // the customer authorized. Nothing is signed if they differ.
+        const cfg = loadHederaConfig();
+        const expected = toSmallestUnit(record.amount, cfg.usdcDecimals).toString();
+        const quotes = await quoteFromGate(resourceUrl, this.opts.gate.fetchImpl);
+        const match = quotes.find(
+          (q) =>
+            q.scheme === "exact" &&
+            q.network === "hedera:testnet" &&
+            q.asset === cfg.usdcTokenId &&
+            q.payTo === payTo &&
+            q.amount === expected,
+        );
+        if (!match) {
+          const seen = quotes.map((q) => `${q.amount} of ${q.asset} to ${q.payTo}`).join("; ") || "none";
+          this.fail(record, `gate_price_mismatch: authorized ${expected} of ${cfg.usdcTokenId} to ${payTo}; gate asked ${seen}`, true);
+          return;
+        }
+        paymentStore.update(record.paymentId, {
+          gateQuote: { amount: match.amount, asset: match.asset, payTo: match.payTo, resourceUrl, at: new Date().toISOString() },
+        });
+        console.log(
+          `[payment ${record.paymentId}] gate quoted ${record.amount} USDC to ${match.payTo} at ${resourceUrl}; matches the authorized payment, signing`,
+        );
+      }
+
       settlement = await this.x402.pay(
         resourceUrl,
         { payTo, amount: record.amount },

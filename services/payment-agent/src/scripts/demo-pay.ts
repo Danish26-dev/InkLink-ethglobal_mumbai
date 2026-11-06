@@ -56,9 +56,12 @@ async function main() {
       ? new HcsAuditPublisher(serviceConfig.auditTopicId, (topic, msg) => signing.submitTopicMessage(topic, msg))
       : undefined;
     console.log(audit ? `HCS audit log: ${hashscanTopicUrl(audit.topicId)}` : "HCS audit log: off (HCS_AUDIT_TOPIC_ID not set)");
+    const gateOrigin = `http://localhost:${serviceConfig.gatePort}`;
     const agent = new PaymentAgent(new X402Client(signing), {
       audit,
-      allowedResourceOrigins: [`http://localhost:${serviceConfig.gatePort}`],
+      // The agent finds the paid endpoint itself and reads the 402 price before signing.
+      gate: { discoveryOrigin: gateOrigin, probePrice: true },
+      allowedResourceOrigins: [gateOrigin],
       payerAccountId: signing.agentAccountId,
       deliver: (event) =>
         deliverCallback(event, {
@@ -92,7 +95,7 @@ async function main() {
       paymentMethod: "hedera_x402",
       merchantId: cfg.merchantId,
       settlementAmount: requested,
-      resourceUrl: `http://localhost:${serviceConfig.gatePort}/api/v1/jobs/${jobId}/execute`,
+      // No resourceUrl: discovered from `${gateOrigin}/discovery/resources`.
       quoteExpiresAt: new Date(Date.now() + 5 * 60_000).toISOString(),
     });
     console.log(`Payment ${started.paymentId} requested for ${requested} USDC (gate charges ${price}) …`);
@@ -116,6 +119,10 @@ async function main() {
     rec = agent.inspect(started.paymentId) ?? rec;
 
     console.log("\n──────── RESULT ────────");
+    if (rec.gateQuote) {
+      console.log(`discovered:    ${rec.gateQuote.resourceUrl} (from ${gateOrigin}/discovery/resources)`);
+      console.log(`402 price:     ${rec.gateQuote.amount} units of ${rec.gateQuote.asset} to ${rec.gateQuote.payTo}`);
+    }
     console.log(`status:        ${rec.status}`);
     if (rec.failureReason) console.log(`reason:        ${rec.failureReason}`);
     if (rec.transactionId) console.log(`transaction:   ${rec.transactionId}`);

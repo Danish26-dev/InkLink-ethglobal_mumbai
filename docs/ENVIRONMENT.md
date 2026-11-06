@@ -40,6 +40,8 @@ The services refuse to start without them. Values must match across services:
 | `BACKEND_EVENT_URL` | Callback target (default `http://localhost:8000/api/v1/internal/payment-settled`) |
 | `CALLBACK_MAX_ATTEMPTS` | Retry budget (default 8) |
 | `OFFLINE_LEDGER_FILE` | OfflinePay voucher ledger (default: `offline-ledger.json` next to `AGENT_STATE_FILE`). Same rules: out of git, refuses to start if corrupt |
+| `X402_GATE_ORIGIN` | The x402 gate origin. The agent finds the paid endpoint from its `/discovery/resources`, so the backend may omit `resourceUrl`. It must also be in `ALLOWED_RESOURCE_ORIGINS`. The 402 price is read before signing either way |
+| `GATE_PUBLIC_ORIGIN` / `GATE_BAZAAR_IN_402` | Gate only. The public https origin used in the discovery document (default: from the request). Set `GATE_BAZAAR_IN_402=0` to leave the Bazaar extension out of the 402 (default: on) |
 | `HCS_AUDIT_TOPIC_ID` | Optional HCS topic for the agent's spend audit log. Create once with `npm run setup:audit-topic` (submit key = agent key, no admin key). Unset = off |
 | `AGENT_STATE_FILE` | Durable state file (default `.data/agent-state.json`). Keep it out of git and out of OneDrive/Dropbox. |
 | `HTS_USDC_TOKEN_ID` / `HTS_USDC_DECIMALS` | Default testnet USDC `0.0.429274` / 6 |

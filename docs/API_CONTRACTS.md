@@ -207,6 +207,19 @@ All require `Authorization: Bearer <INTERNAL_API_TOKEN>`.
 The agent only pays gates whose **origin is allowlisted** and whose path is exactly
 `/api/v1/jobs/{jobId}/execute` for the same job.
 
+**Endpoint discovery and price reading.** With `X402_GATE_ORIGIN` set, the agent finds the paid
+endpoint itself:
+1. It reads the gate's `GET /discovery/resources`. This is the x402 Bazaar `DiscoveryResourcesResponse`,
+   with the official Bazaar extension and the tag `print-job`.
+2. It builds the job's URL from the listed route template.
+
+`resourceUrl` is then **optional**. If it's sent and differs from the discovered URL, the request
+is refused.
+
+Before signing, the agent always sends one unpaid request and reads the job's price from the
+`402` `PAYMENT-REQUIRED` header. If the amount, pay-to account or asset differs from the
+authorized payment, it fails with `gate_price_mismatch`, and nothing is signed.
+
 - `GET /api/v1/payments/{paymentId}` — agent-side status. The backend may use this to learn
   about **failures**; it must learn about **success** only from the signed callback.
 - `GET /health` — unauthenticated; `{ ok, facilitator: "ok"|"unavailable" }`.

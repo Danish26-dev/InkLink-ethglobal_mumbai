@@ -192,8 +192,12 @@ export interface AgentInitiatePaymentRequest extends InitiatePaymentRequest {
   merchantId: string;
   /** USDC decimal string computed by the backend from the INR quote. */
   settlementAmount: DecimalString;
-  /** The x402-protected resource to pay, e.g. .../api/v1/jobs/{jobId}/execute. */
-  resourceUrl: string;
+  /**
+   * The x402-protected resource to pay, e.g. .../api/v1/jobs/{jobId}/execute. Optional when
+   * the agent runs with endpoint discovery: it then finds the endpoint itself from the gate's
+   * x402 discovery document, and refuses a resourceUrl that differs from it.
+   */
+  resourceUrl?: string;
   /**
    * Authoritative backend quote expiry = payment deadline. Required: the agent refuses
    * to start a payment without it, or after it.

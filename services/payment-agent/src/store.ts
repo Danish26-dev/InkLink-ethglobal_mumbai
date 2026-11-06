@@ -44,6 +44,8 @@ export interface PaymentRecord {
   callbackAttempts?: number;
   /** The exact callback body, kept so an undelivered callback can be re-sent after a restart. */
   event?: PaymentSettledEvent;
+  /** The price the gate itself quoted in its 402, read before signing (when price probing is on). */
+  gateQuote?: { amount: string; asset: string; payTo: string; resourceUrl: string; at: string };
   /** Set on failure: true when a transaction may have been submitted (spend kept, do not retry blindly). */
   fundsMayHaveMoved?: boolean;
   /** OfflinePay: the voucher that authorized this payment (instead of an online authorization). */

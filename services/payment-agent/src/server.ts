@@ -107,8 +107,15 @@ function main() {
       ? `[payment-agent] HCS spend audit log -> ${hashscanTopicUrl(audit.topicId)}`
       : "[payment-agent] HCS spend audit log off (set HCS_AUDIT_TOPIC_ID to enable)",
   );
+  const gateDiscovery = serviceConfig.gateDiscoveryOrigin ?? undefined;
+  console.log(
+    gateDiscovery
+      ? `[payment-agent] endpoint discovery from ${gateDiscovery}/discovery/resources; 402 price read before signing`
+      : "[payment-agent] endpoint discovery off (set X402_GATE_ORIGIN); 402 price still read before signing",
+  );
   const agent = new PaymentAgent(new X402Client(signing), {
     audit,
+    gate: { discoveryOrigin: gateDiscovery, probePrice: true },
     allowedResourceOrigins: security.allowedResourceOrigins,
     payerAccountId: signing.agentAccountId,
     deliver: (event) =>
@@ -160,7 +167,9 @@ function main() {
     if (
       !hasStrings(req.body, [
         "jobId", "quoteId", "authorizationId", "paymentMethod",
-        "merchantId", "settlementAmount", "resourceUrl", "quoteExpiresAt",
+        "merchantId", "settlementAmount", "quoteExpiresAt",
+        // With discovery the agent finds the endpoint itself; otherwise the caller must give it.
+        ...(serviceConfig.gateDiscoveryOrigin ? [] : ["resourceUrl"]),
       ])
     ) {
       res.status(400).json(errorBody("POLICY_VIOLATION", "Missing or malformed payment fields"));
