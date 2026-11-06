@@ -52,3 +52,16 @@ On the shop computer itself (loopback, with no forwarded non-local client) the s
 ## Execution gate
 
 Printing requires all of: a config validated by the agent and re-validated by the backend, the customer's approval of the current quote, a verified settled payment (`awaiting_execution`), shop approval, and a PDF document.
+
+## Shopkeeper authentication, jury and devices (v0.2)
+
+- `POST /shop-auth/login {email,password}` returns `{account, shops[], activeShopId, expiresAt}` and sets the HttpOnly `inklink_shop_session` cookie.
+- `GET /shop-auth/me`, `PUT /shop-auth/active-shop {shopId}` and `POST /shop-auth/logout` are the other session routes.
+- Cookie-authenticated writes require `X-Inklink-Request: 1`.
+- Every `/shop/*` route is scoped to the active shop, which must be one the caller manages; otherwise it returns `403 SHOP_FORBIDDEN`.
+- `JobView` gains:
+  - `demo`;
+  - `simulation` (jury only; SIMULATED steps kept apart from `status` and `paymentStatus`);
+  - `deviceEvents`.
+- `ShopHardware` gains `gateway` and `devices` (`not_configured | never_seen | online | offline`).
+- The jury and device routes are listed in `BACKEND_SETUP.md`.

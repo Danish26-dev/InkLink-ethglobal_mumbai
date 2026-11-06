@@ -43,8 +43,10 @@ Start-Service 'inklink web (landing + proxy)' '.' 'npx vite'
 
 Write-Host ""
 Write-Host "Landing page:   http://localhost:5173/"
+Write-Host "Portal:         http://localhost:5173/portal"
 Write-Host "Customer app:   http://localhost:5173/app"
-Write-Host "Shop dashboard: http://localhost:5173/shop   (no token needed on this computer)"
+Write-Host "Shop login:     http://localhost:5173/shop/login   (create accounts: cd services/backend; .\venv\Scripts\python.exe -m app.manage create-shopkeeper ...)"
+Write-Host "Jury demo:      http://localhost:5173/jury"
 Write-Host "Agent:          http://localhost:5173/shop/agent"
 Write-Host "Judge demo:     http://localhost:5173/demo"
 Write-Host "Backend API:    http://127.0.0.1:8000/health"

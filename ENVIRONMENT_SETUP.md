@@ -1,0 +1,48 @@
+# Environment setup
+
+Every secret lives in a service's own git-ignored `.env`, or in your deployment's secret manager. Nothing secret goes in a React/`VITE_*` variable, in the mobile app or in git. `.env.example` (repo root) maps each variable to its file; every service also has its own `.env.example`.
+
+Status legend: **Configured** = set on this machine · **Tested** = exercised by tests or a live run · **Pending** = needs your credentials or hardware · **Simulated** = demo-only labelled path.
+
+## Where to enter what
+
+| What | File | Variables | Status |
+|---|---|---|---|
+| Three 0G Private Computer keys | `services/backend/.env` | `ZERO_G_STANDARD_API_KEY`, `ZERO_G_VERIFIED_API_KEY`, `ZERO_G_PRIVATE_API_KEY` | Pending (code tested with mocks; live catalog check tested) |
+| 0G model / routing | `services/backend/.env` | `ZERO_G_BASE_URL`, `ZERO_G_MODEL_ID` (default `glm-5.3`, TeeML + tools), optional `ZERO_G_{STANDARD,VERIFIED,PRIVATE}_MODEL_ID`, `ZERO_G_DEFAULT_TRUST_MODE`, `ZERO_G_TIMEOUT_SECONDS`, `ZERO_G_MAX_RETRIES`, `ZERO_G_REQUIRE_TEE_VERIFICATION` | Configured defaults |
+| Hedera agent account | `services/payment-agent/.env` and `deploy/.env.gate` | `HEDERA_AGENT_ACCOUNT_ID`, `HEDERA_AGENT_PRIVATE_KEY` | Pending (Omkar) |
+| Hedera merchant account | backend, payment agent, gate | `MERCHANT_ACCOUNT_ID` (identical everywhere), `MERCHANT_ID` | Pending |
+| HTS-USDC / FX | `services/backend/.env` | `INR_TO_USDC_RATE` (USDC per 1 INR), `FX_SOURCE_LABEL` | Pending |
+| Callback signing secret | backend + payment agent | `PAYMENT_EVENT_SIGNING_SECRET` (identical) | Pending |
+| Internal payment-agent token | backend + payment agent | `INTERNAL_API_TOKEN` (identical) | Pending |
+| x402 gate → backend token | backend + gate | `BACKEND_API_TOKEN` (identical) | Pending |
+| Settlement callback URL | payment agent | `BACKEND_EVENT_URL=https://<backend>/api/v1/internal/payment-settled` | Pending |
+| 0G Galileo RPC | `services/backend/.env` | `ZERO_G_GALILEO_RPC_URL`, `ZERO_G_GALILEO_CHAIN_ID` | Pending (contracts not in repo) |
+| Galileo **deployer** key | your machine / CI only, never the backend | `ZERO_G_GALILEO_DEPLOYER_PRIVATE_KEY` | Pending |
+| Galileo backend signer | `services/backend/.env` or secret manager | `ZERO_G_GALILEO_SIGNER_PRIVATE_KEY` | Pending |
+| Contract addresses + ABIs | `services/backend/.env` | `INKLINK_SHOP_REGISTRY_ADDRESS`, `INKLINK_JOB_REGISTRY_ADDRESS`, `INKLINK_*_ABI_PATH` | Pending, after deployment |
+| 0G Storage | `services/backend/.env` | `ZERO_G_STORAGE_INDEXER_URL` | Pending (optional) |
+| Google Cloud (only if `INKLINK_MODEL_PROVIDER=vertex-ai`) | `services/strands-agent/.env` | `GOOGLE_CLOUD_PROJECT`, `GOOGLE_CLOUD_LOCATION`, `VERTEX_AI_MODEL_ID` + ADC login | Optional; not needed for 0G |
+| Printer gateway | backend + `services/local-printer-agent/.env` | `PRINTER_AGENT_URL`, `PRINTER_AGENT_TOKEN` (identical) | Configured locally, tested |
+| ESP32-S3 controller | backend + device firmware | `DEVICE_TOKEN` | Pending (hardware) |
+| Agent ↔ backend | backend + `services/strands-agent/.env` | `AGENT_SERVICE_TOKEN` (identical) | Configured locally, tested |
+| Shopkeeper accounts | backend state (no env) | `python -m app.manage create-shopkeeper ...` | Tested |
+
+## Generating shared secrets
+
+```powershell
+node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
+```
+
+Use one fresh value per shared secret and put the same value on both sides.
+
+## Rules that the code enforces
+
+- 0G keys are read only by the backend. The agent gets a short-lived per-run grant for the backend's gateway, never a key. No endpoint returns a key (tested).
+- A missing key for the trust mode a document needs stops the run before anything is sent. Another mode's key is never used.
+- `SHOP_LOCAL_ACCESS` is now `false` by default; shopkeepers log in.
+- `.env` and `.env.*` are git-ignored; `.env.example` files are committed and contain only empty placeholders.
+
+## Rotate
+
+The AWS key that was found earlier in `services/strands-agent/.env` must be rotated. It is not used by Inklink any more.
