@@ -5,6 +5,7 @@
  * empty until real URLs exist — the UI never invents one.
  */
 export const LINKS = {
+  portal: import.meta.env.VITE_INKLINK_PORTAL_URL || '/portal',
   app: import.meta.env.VITE_INKLINK_APP_URL || '/app',
   shop: import.meta.env.VITE_INKLINK_SHOP_URL || '/shop',
   agent: import.meta.env.VITE_INKLINK_AGENT_URL || '/shop/agent',

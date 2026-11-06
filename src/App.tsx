@@ -3,7 +3,6 @@ import gsap from 'gsap';
 
 import Navigation from './components/Navigation';
 import Preloader from './components/Preloader';
-import LaunchDialog from './components/LaunchDialog';
 
 import Hero from './sections/Hero';
 import Workshop from './sections/Workshop';
@@ -107,7 +106,6 @@ export default function App() {
         <FinalCTA />
       </main>
       <Footer />
-      <LaunchDialog />
     </>
   );
 }
