@@ -237,3 +237,21 @@ def test_bootstrap_shopkeeper_once_and_never_overwrites(monkeypatch):
     monkeypatch.setenv("BOOTSTRAP_SHOPKEEPER_PASSWORD", "a different password")
     assert bootstrap_shopkeeper_from_env() is None
     assert st.accounts[created].password_hash == before
+
+
+def test_bootstrap_password_sync_is_opt_in_and_ends_sessions(monkeypatch):
+    from app.auth import verify_password
+    from app.manage import bootstrap_shopkeeper_from_env
+
+    monkeypatch.setenv("BOOTSTRAP_SHOPKEEPER_EMAIL", "owner@example.com")
+    monkeypatch.setenv("BOOTSTRAP_SHOPKEEPER_PASSWORD", "first password 123")
+    acct_id = bootstrap_shopkeeper_from_env()
+    st = store_mod.get_store()
+    st.shop_sessions["h1"] = store_mod.ShopSession(token_hash="h1", account_id=acct_id, created_at=time.time(),
+                                                   expires_at=time.time() + 60)
+    monkeypatch.setenv("BOOTSTRAP_SHOPKEEPER_PASSWORD", "second password 456")
+    monkeypatch.setenv("BOOTSTRAP_SHOPKEEPER_SYNC_PASSWORD", "true")
+    assert bootstrap_shopkeeper_from_env() == acct_id
+    assert verify_password("second password 456", st.accounts[acct_id].password_hash)
+    assert "h1" not in st.shop_sessions
+    assert bootstrap_shopkeeper_from_env() is None  # already in sync: nothing to do

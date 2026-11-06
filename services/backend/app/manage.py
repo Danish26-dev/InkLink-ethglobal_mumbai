@@ -17,7 +17,7 @@ import getpass
 import os
 import sys
 
-from .auth import hash_password, new_account
+from .auth import hash_password, new_account, verify_password
 from .store import get_store
 
 
@@ -36,15 +36,30 @@ def bootstrap_shopkeeper_from_env() -> str | None:
 
     BOOTSTRAP_SHOPKEEPER_EMAIL / _NAME / _SHOPS and BOOTSTRAP_SHOPKEEPER_PASSWORD
     (a Secret Manager secret). Runs at startup; does nothing when the variables are
-    unset or the account already exists, so an existing password is never replaced.
-    Returns the created account id (for logging), else None.
+    unset or the account already exists, so an existing password is never replaced
+    (unless BOOTSTRAP_SHOPKEEPER_SYNC_PASSWORD=true, see below).
+    Returns the created or updated account id (for logging), else None.
     """
     email = os.environ.get("BOOTSTRAP_SHOPKEEPER_EMAIL", "").strip().lower()
     password = os.environ.get("BOOTSTRAP_SHOPKEEPER_PASSWORD", "")
     if not email or not password:
         return None
     store = get_store()
-    if any(a.email == email for a in store.accounts.values()):
+    existing = next((a for a in store.accounts.values() if a.email == email), None)
+    if existing is not None:
+        # Opt-in: BOOTSTRAP_SHOPKEEPER_SYNC_PASSWORD=true makes the secret authoritative, so a
+        # wrong first password can be corrected without a shell. Existing sessions end.
+        sync = os.environ.get("BOOTSTRAP_SHOPKEEPER_SYNC_PASSWORD", "").strip().lower() in ("1", "true", "yes")
+        if sync and not verify_password(password, existing.password_hash):
+            new_hash = hash_password(password)  # ValueError on a weak password
+            with store.lock:
+                existing.password_hash = new_hash
+                existing.disabled = False
+                for k, sess in list(store.shop_sessions.items()):
+                    if sess.account_id == existing.account_id:
+                        store.shop_sessions.pop(k, None)
+                store.save()
+            return existing.account_id
         return None
     name = os.environ.get("BOOTSTRAP_SHOPKEEPER_NAME", "").strip() or "Shop owner"
     wanted = [s.strip() for s in os.environ.get("BOOTSTRAP_SHOPKEEPER_SHOPS", "").split(",") if s.strip()]
