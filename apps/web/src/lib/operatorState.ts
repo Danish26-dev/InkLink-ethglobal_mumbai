@@ -123,6 +123,8 @@ export interface OperatorState {
     finishMessage: string | null;
   } | null;
   thinking: string | null;
+  /** Customer-visible model text of the current run (agent_thinking), oldest first. */
+  narration: string[];
   config: OperatorPrintConfig;
   /** Config fields set during the current run (for the "changed" marker). */
   touched: Partial<Record<OperatorConfigField, number>>;
@@ -150,6 +152,7 @@ export interface OperatorState {
 export const INITIAL_STATE: OperatorState = {
   run: null,
   thinking: null,
+  narration: [],
   config: { ...EMPTY_OPERATOR_CONFIG },
   touched: {},
   validated: false,
@@ -201,11 +204,12 @@ export function reduce(s: OperatorState, e: OperatorEvent): OperatorState {
           finishMessage: null,
         },
         thinking: null,
+        narration: [],
         touched: {},
         phase: 'reading_document',
       };
     case 'agent_thinking':
-      return { ...s, thinking: e.payload.text };
+      return { ...s, thinking: e.payload.text, narration: [...s.narration, e.payload.text].slice(-8) };
     case 'tool_started': {
       const call: ToolCall = {
         toolUseId: e.payload.toolUseId,

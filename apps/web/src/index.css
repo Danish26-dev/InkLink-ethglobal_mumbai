@@ -49,6 +49,11 @@ body {
   transition: transform 520ms cubic-bezier(0.16, 1, 0.3, 1);
   will-change: transform;
 }
+.operator-target {
+  transition: transform 520ms cubic-bezier(0.16, 1, 0.3, 1), width 520ms cubic-bezier(0.16, 1, 0.3, 1),
+    height 520ms cubic-bezier(0.16, 1, 0.3, 1);
+  box-shadow: 0 0 0 4px rgba(241, 90, 54, 0.12);
+}
 .operator-cursor.clicking .cursor-ring {
   animation: cursor-click 360ms ease-out;
 }
@@ -61,6 +66,19 @@ body {
     transform: scale(1.8);
     opacity: 0;
   }
+}
+
+/* Document "being read" sweep, shown only while a run is active. */
+@keyframes scan {
+  0% {
+    transform: translateY(-100%);
+  }
+  100% {
+    transform: translateY(700px);
+  }
+}
+.scan-line {
+  animation: scan 2.6s cubic-bezier(0.45, 0, 0.55, 1) infinite;
 }
 
 @keyframes pulse-dot {
@@ -77,10 +95,12 @@ body {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .operator-cursor {
+  .operator-cursor,
+  .operator-target {
     transition-duration: 1ms;
   }
   .operator-cursor.clicking .cursor-ring,
+  .scan-line,
   .pulse-dot {
     animation: none;
   }

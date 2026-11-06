@@ -12,14 +12,16 @@ import { useCallback, useEffect, useState } from 'react';
 import type { OperatorEvent } from '@inklink/shared-schemas';
 
 const DWELL: Partial<Record<OperatorEvent['type'], number>> = {
-  tool_started: 1150,
-  configuration_updated: 650,
-  tool_succeeded: 450,
-  tool_failed: 1100,
-  agent_thinking: 500,
-  agent_started: 450,
+  // Room for: tab click -> reach control -> open menu -> aim at option.
+  tool_started: 1700,
+  configuration_updated: 700,
+  tool_succeeded: 550,
+  tool_failed: 1400,
+  agent_thinking: 900,
+  agent_started: 600,
+  printer_readiness_updated: 450,
 };
-const DEFAULT_DWELL = 220;
+const DEFAULT_DWELL = 250;
 const CATCH_UP_BACKLOG = 24;
 const CATCH_UP_DWELL = 40;
 
@@ -49,7 +51,7 @@ export function usePlayback(events: OperatorEvent[], animate = true) {
     return () => clearTimeout(t);
   }, [events, played, animate, replaying]);
 
-  /** Replay the same recorded events from the beginning (demo / review). */
+  /** Replay the same recorded events from the beginning (review). */
   const restart = useCallback(() => {
     setReplaying(true);
     setPlayed(0);
