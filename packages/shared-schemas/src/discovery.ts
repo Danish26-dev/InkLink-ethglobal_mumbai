@@ -18,6 +18,13 @@ export interface GatewayDiscoveryHint {
   /** Optional IPv4 address of the gateway on the shop LAN. Preferred when mDNS fails. */
   ip?: string;
   port: number;
+  /**
+   * Optional HTTPS origin of a cloud-hosted Inklink backend serving this shop
+   * (e.g. "https://inklink-backend-xxxx.asia-south1.run.app"). Covered by the QR
+   * signature, tried after the LAN addresses, and — like them — trusted only after
+   * the challenge-response handshake proves the shop's key. Absent for LAN-only shops.
+   */
+  cloudOrigin?: string;
 }
 
 /**

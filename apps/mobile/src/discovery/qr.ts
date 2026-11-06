@@ -116,7 +116,16 @@ function assertShape(v: unknown): ShopQrPayload {
   if (g.ip !== undefined && (typeof g.ip !== "string" || !isLocalIpv4(g.ip))) {
     throw bad("QR gateway IP must be a private LAN address");
   }
+  if (g.cloudOrigin !== undefined && !isHttpsOrigin(g.cloudOrigin)) {
+    throw bad("QR cloud address must be an https origin");
+  }
   return o as ShopQrPayload;
+}
+
+/** `https://host[:port]` only: no credentials, path, query or fragment. */
+export function isHttpsOrigin(value: unknown): value is string {
+  if (typeof value !== "string" || value.length > 253 + 16) return false;
+  return /^https:\/\/[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?)+(:\d{1,5})?$/.test(value);
 }
 
 /**
@@ -137,9 +146,18 @@ export function validateScannedQr(raw: string, now: Date = new Date()): ShopQrPa
 
 /**
  * Origins to try, in preference order. The IPv4 hint comes first because mDNS
- * (.local) frequently fails to resolve on Android; both are probed in parallel.
+ * (.local) frequently fails to resolve on Android; all are probed in parallel.
+ * A cloud origin (signed in the QR, or the build's EXPO_PUBLIC_CLOUD_ORIGIN as a
+ * fallback for shops paired before) comes last, so a reachable LAN gateway always
+ * wins. Every candidate must still pass the handshake against the pinned key.
  */
-export function gatewayCandidates(p: { gateway: { ip?: string | null; mdns: string; port: number } }): string[] {
-  const { ip, mdns, port } = p.gateway;
-  return [...(ip ? [`http://${ip}:${port}`] : []), `http://${mdns}:${port}`];
+export function gatewayCandidates(
+  p: { gateway: { ip?: string | null; mdns: string; port: number; cloudOrigin?: string | null } },
+  fallbackCloudOrigin?: string,
+): string[] {
+  const { ip, mdns, port, cloudOrigin } = p.gateway;
+  const cloud = [cloudOrigin, fallbackCloudOrigin]
+    .map((o) => (o ?? "").replace(/\/+$/, ""))
+    .filter((o, i, all) => isHttpsOrigin(o) && all.indexOf(o) === i);
+  return [...(ip ? [`http://${ip}:${port}`] : []), `http://${mdns}:${port}`, ...cloud];
 }

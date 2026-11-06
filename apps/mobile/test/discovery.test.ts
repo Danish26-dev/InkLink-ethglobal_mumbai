@@ -73,6 +73,34 @@ describe("QR validation (gateway signs with Node crypto, app verifies with noble
     assert.deepEqual(gatewayCandidates(parsed), ["http://gateway-001.local:8000"]);
   });
 
+  it("accepts a signed https cloud origin and tries it after the LAN addresses", () => {
+    const cloud = "https://inklink-backend-abc123.asia-south1.run.app";
+    const parsed = validateScannedQr(JSON.stringify(gw.qr({}, { cloudOrigin: cloud })));
+    assert.deepEqual(gatewayCandidates(parsed), ["http://192.168.1.20:8000", "http://gateway-001.local:8000", cloud]);
+    // The build's fallback origin is appended once (deduplicated, trailing slash ignored).
+    assert.deepEqual(gatewayCandidates(parsed, `${cloud}/`), ["http://192.168.1.20:8000", "http://gateway-001.local:8000", cloud]);
+  });
+
+  it("rejects a cloud origin that is not a plain https origin", () => {
+    for (const bad of ["http://inklink.example.com", "https://inklink.example.com/path", "https://user@inklink.example.com", "javascript:alert(1)"]) {
+      expectQr(() => validateScannedQr(JSON.stringify(gw.qr({}, { cloudOrigin: bad }))), "INVALID_QR");
+    }
+  });
+
+  it("a changed cloud origin breaks the signature", () => {
+    const q = gw.qr({}, { cloudOrigin: "https://inklink.example.com" }) as any;
+    q.gateway.cloudOrigin = "https://evil.example.com";
+    expectQr(() => validateScannedQr(JSON.stringify(q)), "SIGNATURE_INVALID");
+  });
+
+  it("uses the build's cloud origin as a last-resort candidate, never a non-https one", () => {
+    const parsed = validateScannedQr(JSON.stringify(gw.qr()));
+    assert.deepEqual(gatewayCandidates(parsed, "https://staging.inklink.example"), [
+      "http://192.168.1.20:8000", "http://gateway-001.local:8000", "https://staging.inklink.example"]);
+    assert.deepEqual(gatewayCandidates(parsed, "http://staging.inklink.example"), [
+      "http://192.168.1.20:8000", "http://gateway-001.local:8000"]);
+  });
+
   it("rejects an expired QR", () => {
     expectQr(() => validateScannedQr(JSON.stringify(gw.qr({ expiresAt: new Date(Date.now() - 1000).toISOString() }))), "QR_EXPIRED");
   });

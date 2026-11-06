@@ -5,6 +5,14 @@
       "distribution": "internal",
       "android": { "buildType": "apk" }
     },
+    "staging": {
+      "distribution": "internal",
+      "android": { "buildType": "apk" },
+      "env": {
+        "INKLINK_ENV": "staging",
+        "EXPO_PUBLIC_CLOUD_ORIGIN": "https://REPLACE-WITH-inklink-backend-URL.asia-south1.run.app"
+      }
+    },
     "production": {
       "android": { "buildType": "app-bundle" },
       "env": { "INKLINK_ENV": "production" }

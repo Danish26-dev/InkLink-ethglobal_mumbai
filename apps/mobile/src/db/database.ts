@@ -36,6 +36,8 @@ export interface PairedShopRow {
   gatewayMdns: string;
   gatewayIp: string | null;
   gatewayPort: number;
+  /** Signed https origin of a cloud-hosted backend for this shop (from the QR), if any. */
+  gatewayCloudOrigin?: string | null;
   pairedAt: string;
 }
 
@@ -82,6 +84,7 @@ async function getDb(): Promise<SQLiteDatabase | null> {
           gatewayMdns TEXT NOT NULL,
           gatewayIp TEXT,
           gatewayPort INTEGER NOT NULL,
+          gatewayCloudOrigin TEXT,
           pairedAt TEXT NOT NULL
         );
         CREATE TABLE IF NOT EXISTS jobs (
@@ -105,6 +108,7 @@ async function getDb(): Promise<SQLiteDatabase | null> {
       for (const ddl of [
         `ALTER TABLE shops ADD COLUMN publicKey TEXT NOT NULL DEFAULT ''`,
         `ALTER TABLE shops ADD COLUMN gatewayIp TEXT`,
+        `ALTER TABLE shops ADD COLUMN gatewayCloudOrigin TEXT`,
       ]) {
         try {
           await db.execAsync(ddl);
@@ -124,8 +128,8 @@ export const db = {
     if (!d) return;
     await d.runAsync(
       `INSERT OR REPLACE INTO shops
-       (shopId, gatewayId, name, publicKey, publicKeyFingerprint, gatewayMdns, gatewayIp, gatewayPort, pairedAt)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       (shopId, gatewayId, name, publicKey, publicKeyFingerprint, gatewayMdns, gatewayIp, gatewayPort, gatewayCloudOrigin, pairedAt)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       row.shopId,
       row.gatewayId,
       row.name,
@@ -134,6 +138,7 @@ export const db = {
       row.gatewayMdns,
       row.gatewayIp,
       row.gatewayPort,
+      row.gatewayCloudOrigin ?? null,
       row.pairedAt,
     );
   },
