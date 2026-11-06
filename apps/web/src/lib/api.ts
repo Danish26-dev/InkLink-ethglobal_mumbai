@@ -14,7 +14,10 @@ import type {
   Quote,
   ShopChannel,
   ShopConfig,
+  ShopHardware,
   ShopOverview,
+  ShopPayments,
+  TrustMode,
   WebSession,
 } from '@inklink/shared-schemas';
 
@@ -71,6 +74,7 @@ export const shopToken = {
 
 async function bearer(auth: AuthKind | null): Promise<string | null> {
   if (auth === 'web') return (await ensureWebSession()).sessionToken;
+  // No token is fine on the shop computer itself (backend SHOP_LOCAL_ACCESS).
   if (auth === 'shop') return shopToken.get();
   return null;
 }
@@ -156,6 +160,19 @@ export const api = {
     return `/api/v1/jobs/${enc(jobId)}/document?ticket=${enc(ticket)}&version=${version}`;
   },
 
+  health: () =>
+    request<{ ok: boolean; paymentsConfigured: boolean; zeroG: { defaultTrustMode: TrustMode; modes: Record<TrustMode, boolean> } }>(
+      'GET',
+      '/api/v1/health',
+      { auth: null },
+    ),
+
+  setPrivacy: (jobId: string, requestedTrustMode: TrustMode | null) =>
+    request<JobView>('PUT', `/api/v1/jobs/${enc(jobId)}/privacy`, { body: { requestedTrustMode } }),
+
+  approveEdits: (jobId: string) => request<JobView>('POST', `/api/v1/jobs/${enc(jobId)}/document/approve`),
+  rejectEdits: (jobId: string) => request<JobView>('POST', `/api/v1/jobs/${enc(jobId)}/document/reject`),
+
   quote: (jobId: string) => request<Quote>('POST', `/api/v1/jobs/${enc(jobId)}/quote`),
 
   approveQuote: (jobId: string) => request<PaymentHandoff>('POST', `/api/v1/jobs/${enc(jobId)}/quote/approve`),
@@ -181,6 +198,8 @@ export const api = {
     config: () => request<ShopConfig & { defaults?: Record<string, unknown> }>('GET', '/api/v1/shop/config', { auth: 'shop' }),
     saveConfig: (cfg: ShopConfig) => request<ShopConfig>('PUT', '/api/v1/shop/config', { auth: 'shop', body: cfg }),
     pairingQr: () => request<{ qrText: string; expiresAt: string }>('GET', '/api/v1/shop/pairing-qr', { auth: 'shop' }),
+    hardware: () => request<ShopHardware>('GET', '/api/v1/shop/hardware', { auth: 'shop' }),
+    payments: () => request<ShopPayments>('GET', '/api/v1/shop/payments', { auth: 'shop' }),
   },
 };
 

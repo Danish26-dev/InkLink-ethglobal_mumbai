@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
-import { Link, useParams } from 'react-router-dom';
-import { ArrowLeft, Check, FileText, Loader2, MonitorPlay, Paperclip, Send, TriangleAlert } from 'lucide-react';
-import type { ConversationMessage, JobView, PaymentHandoff, Quote } from '@inklink/shared-schemas';
-import { api, errorMessage } from '../lib/api';
+import { Link, useParams, useSearchParams } from 'react-router-dom';
+import { ArrowLeft, Check, FileText, Loader2, Lock, MonitorPlay, Paperclip, Plus, Send, TriangleAlert } from 'lucide-react';
+import type { ConversationMessage, JobView, PaymentHandoff, Quote, TrustMode } from '@inklink/shared-schemas';
+import { api, ApiError, errorMessage } from '../lib/api';
 import { foldEvents, PHASE_LABEL, TOOL_LABEL } from '../lib/operatorState';
-import { recentJobs, savedHandoff, saveHandoff } from '../lib/recent';
+import { currentJobFor, recentJobs, rememberJob, savedHandoff, saveHandoff, setCurrentJob } from '../lib/recent';
+import { ICON } from '../components/Logo';
 import { useJobEvents } from '../lib/useJobEvents';
 import { PaymentHandoffCard } from './PaymentHandoffCard';
 import { COLOR_LABEL, ORIENTATION_LABEL, PAPER_LABEL, SIDES_LABEL } from '../workspace/PrinterDialog';
@@ -12,17 +13,81 @@ import { COLOR_LABEL, ORIENTATION_LABEL, PAPER_LABEL, SIDES_LABEL } from '../wor
 const REFRESH_ON = new Set(['agent_finished', 'job_status_updated', 'approval_required', 'document_processed', 'payment_status_updated', 'execution_authorized']);
 const LOCKED = new Set(['awaiting_execution', 'executing', 'completed', 'cancelled', 'failed']);
 
-/** WhatsApp-style conversation with the shop's print operator. */
+/**
+ * /app/chat/:shopId — the customer's conversation with a shop.
+ * Opens the order given by ?job=, else the current order with this shop in
+ * this tab, else starts a new one.
+ */
 export function Chat() {
-  const { jobId = '' } = useParams<{ jobId: string }>();
-  const shopName = recentJobs().find((j) => j.jobId === jobId)?.shopName ?? 'Print shop';
+  const { shopId = '' } = useParams<{ shopId: string }>();
+  const [search, setSearch] = useSearchParams();
+  const [jobId, setJobId] = useState<string | null>(search.get('job') ?? currentJobFor(shopId));
+  const [shopName, setShopName] = useState(recentJobs().find((j) => j.shopId === shopId)?.shopName ?? 'Print shop');
+  const [error, setError] = useState<string | null>(null);
+  const creating = useRef(false);
+
+  const startOrder = useCallback(async () => {
+    if (creating.current) return;
+    creating.current = true;
+    setError(null);
+    try {
+      const shop = (await api.shops()).find((s) => s.shopId === shopId);
+      if (!shop) throw new Error('This shop is not on Inklink.');
+      setShopName(shop.name);
+      if (!shop.acceptingOrders) throw new Error(`${shop.name} is not accepting orders right now.`);
+      const job = await api.createJob(shopId);
+      rememberJob({ jobId: job.jobId, shopId, shopName: shop.name, createdAt: job.createdAt });
+      setJobId(job.jobId);
+      setSearch({ job: job.jobId }, { replace: true });
+    } catch (e) {
+      setError(errorMessage(e));
+    } finally {
+      creating.current = false;
+    }
+  }, [shopId, setSearch]);
+
+  useEffect(() => {
+    if (!jobId) {
+      void startOrder();
+      return;
+    }
+    // A job from an expired session is not visible any more: start a new order.
+    api.job(jobId).then(
+      (j) => setCurrentJob(j.shopId, j.jobId),
+      (e) => {
+        if (e instanceof ApiError && (e.status === 404 || e.status === 401)) {
+          setCurrentJob(shopId, null);
+          setJobId(null);
+        }
+      },
+    );
+  }, [jobId, shopId, startOrder]);
+
+  if (!jobId) {
+    return (
+      <div className="mx-auto flex h-full max-w-2xl flex-col items-center justify-center gap-3 bg-[#F1F0EB] p-6 text-center">
+        {error ? (
+          <>
+            <p className="text-sm text-signal" role="alert">{error}</p>
+            <Link to="/app" className="btn-ghost">Back to shops</Link>
+          </>
+        ) : (
+          <p className="flex items-center gap-2 text-sm text-graphite"><Loader2 className="h-4 w-4 animate-spin" />Starting your order…</p>
+        )}
+      </div>
+    );
+  }
+  return <ChatJob key={jobId} jobId={jobId} shopName={shopName} onNewOrder={() => { setCurrentJob(shopId, null); setJobId(null); }} />;
+}
+
+function ChatJob({ jobId, shopName, onNewOrder }: { jobId: string; shopName: string; onNewOrder: () => void }) {
   const { events, state: stream } = useJobEvents(jobId, 'web');
   const live = useMemo(() => foldEvents(events), [events]);
 
   const [job, setJob] = useState<JobView | null>(null);
   const [messages, setMessages] = useState<ConversationMessage[]>([]);
   const [text, setText] = useState('');
-  const [busy, setBusy] = useState<null | 'send' | 'upload' | 'quote' | 'approve'>(null);
+  const [busy, setBusy] = useState<null | 'send' | 'upload' | 'quote' | 'approve' | 'review'>(null);
   const [error, setError] = useState<string | null>(null);
   const [handoff, setHandoff] = useState<PaymentHandoff | null>(() => savedHandoff(jobId));
   const fileRef = useRef<HTMLInputElement>(null);
@@ -115,6 +180,28 @@ export function Chat() {
     }
   };
 
+  const review = async (choice: 'approve' | 'reject') => {
+    setBusy('review');
+    setError(null);
+    try {
+      setJob(choice === 'approve' ? await api.approveEdits(jobId) : await api.rejectEdits(jobId));
+      await refresh();
+    } catch (err) {
+      setError(errorMessage(err));
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const setPrivacy = async (mode: TrustMode | null) => {
+    setError(null);
+    try {
+      setJob(await api.setPrivacy(jobId, mode));
+    } catch (err) {
+      setError(errorMessage(err));
+    }
+  };
+
   const openDocument = async (version: 'original' | 'current') => {
     try {
       window.open(await api.documentUrl(jobId, version), '_blank', 'noopener');
@@ -128,17 +215,22 @@ export function Chat() {
   return (
     <div className="mx-auto flex h-full max-w-2xl flex-col bg-[#F1F0EB]">
       <header className="flex items-center gap-3 bg-ink px-4 py-3 text-paper">
-        <Link to="/" className="rounded-md p-1.5 hover:bg-white/10" aria-label="Back to shops"><ArrowLeft className="h-5 w-5" /></Link>
-        <img src="/icon.svg" alt="" className="h-9 w-9 rounded-full bg-paper p-1" />
+        <Link to="/app" className="rounded-md p-1.5 hover:bg-white/10" aria-label="Back to shops"><ArrowLeft className="h-5 w-5" /></Link>
+        <img src={ICON} alt="" className="h-9 w-9 rounded-full bg-paper p-1" />
         <div className="min-w-0">
           <p className="truncate font-medium leading-tight">{shopName}</p>
           <p className="text-xs text-paper/60">
             {running ? (currentTool ? `${TOOL_LABEL[currentTool.tool] ?? currentTool.tool}…` : 'Print operator is working…') : stream === 'live' ? 'Print operator' : 'Connecting…'}
           </p>
         </div>
-        <Link to={`/chat/${jobId}/workspace`} className="ml-auto inline-flex items-center gap-1.5 rounded-md border border-white/20 px-2.5 py-1.5 text-xs hover:bg-white/10">
-          <MonitorPlay className="h-4 w-4" aria-hidden="true" />Watch operator
-        </Link>
+        <div className="ml-auto flex items-center gap-1.5">
+          <Link to={`/app/jobs/${jobId}/agent`} className="inline-flex items-center gap-1.5 rounded-md border border-white/20 px-2.5 py-1.5 text-xs hover:bg-white/10">
+            <MonitorPlay className="h-4 w-4" aria-hidden="true" />Watch operator
+          </Link>
+          <button type="button" onClick={onNewOrder} className="rounded-md border border-white/20 p-1.5 hover:bg-white/10" aria-label="New order" title="New order">
+            <Plus className="h-4 w-4" />
+          </button>
+        </div>
       </header>
 
       {job && <StatusTracker job={job} />}
@@ -158,20 +250,40 @@ export function Chat() {
                   </p>
                 </div>
               </div>
-              <div className="mt-2 flex gap-2 text-xs">
-                <button type="button" className="text-signal underline" onClick={() => openDocument('original')}>Original</button>
-                {job.document.edited && <button type="button" className="text-signal underline" onClick={() => openDocument('current')}>Edited version</button>}
-              </div>
-              {job.document.reviewRecommended && (
-                <p className="mt-2 flex items-center gap-1.5 text-xs text-signal"><TriangleAlert className="h-3.5 w-3.5" aria-hidden="true" />Please review the edited version.</p>
+              {job.document.classification && (
+                <p className="mt-1 flex items-center gap-1 font-mono text-[10px] text-graphite">
+                  <Lock className="h-3 w-3" aria-hidden="true" />
+                  {job.document.classification.level === 'non_sensitive'
+                    ? 'No sensitive content found'
+                    : job.document.classification.level === 'sensitive'
+                      ? `Sensitive: ${job.document.classification.categories.join(', ')} · private inference only`
+                      : 'Not classifiable · private inference only'}
+                </p>
               )}
+              {job.document.available ? (
+                <div className="mt-2 flex gap-2 text-xs">
+                  <button type="button" className="text-signal underline" onClick={() => openDocument('original')}>Original</button>
+                  {job.document.edited && <button type="button" className="text-signal underline" onClick={() => openDocument('current')}>Edited version</button>}
+                </div>
+              ) : <p className="mt-2 text-xs text-graphite">Deleted under the shop's retention policy.</p>}
+              {job.document.editStatus === 'pending_review' && (
+                <div className="mt-2 rounded-md bg-signal/10 p-2">
+                  <p className="flex items-center gap-1.5 text-xs"><TriangleAlert className="h-3.5 w-3.5 text-signal" aria-hidden="true" />
+                    The operator made an edited copy. Your original is unchanged.</p>
+                  <div className="mt-2 flex gap-2">
+                    <button type="button" className="btn-primary px-2.5 py-1 text-xs" disabled={busy !== null} onClick={() => review('approve')}>Use edited version</button>
+                    <button type="button" className="btn-ghost px-2.5 py-1 text-xs" disabled={busy !== null} onClick={() => review('reject')}>Keep original</button>
+                  </div>
+                </div>
+              )}
+              {job.document.editStatus === 'approved' && <p className="mt-2 text-xs text-emerald-700">Edited version approved.</p>}
             </div>
           </div>
         )}
 
         {running && (
           <div className="flex">
-            <Link to={`/chat/${jobId}/workspace`} className="flex items-center gap-2 rounded-xl rounded-tl-sm bg-white px-3 py-2 text-sm shadow-sm hover:ring-1 hover:ring-ink/20">
+            <Link to={`/app/jobs/${jobId}/agent`} className="flex items-center gap-2 rounded-xl rounded-tl-sm bg-white px-3 py-2 text-sm shadow-sm hover:ring-1 hover:ring-ink/20">
               <Loader2 className="h-4 w-4 animate-spin text-signal" aria-hidden="true" />
               <span>{PHASE_LABEL[live.phase]}</span>
               <span className="text-xs text-graphite underline">watch</span>
@@ -181,7 +293,7 @@ export function Chat() {
 
         {job && !running && <ConfigSummary job={job} />}
 
-        {job && !running && job.configValidated && !job.quote && !locked && (
+        {job && !running && job.configValidated && !job.quote && !locked && job.document?.editStatus !== 'pending_review' && (
           <div className="flex">
             <button type="button" className="btn-primary" onClick={requestQuote} disabled={busy !== null}>
               {busy === 'quote' && <Loader2 className="h-4 w-4 animate-spin" />}Get price
@@ -196,6 +308,8 @@ export function Chat() {
       </div>
 
       {error && <p className="bg-signal/10 px-4 py-2 text-sm" role="alert">{error}</p>}
+
+      {job && !locked && <PrivacyBar job={job} onChange={setPrivacy} disabled={running} />}
 
       <form onSubmit={send} className="flex items-end gap-2 bg-[#F1F0EB] px-3 pb-[max(env(safe-area-inset-bottom),12px)] pt-2">
         <input ref={fileRef} type="file" accept=".pdf,.docx,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
@@ -215,6 +329,38 @@ export function Chat() {
           {busy === 'send' ? <Loader2 className="h-5 w-5 animate-spin" /> : <Send className="h-5 w-5" />}
         </button>
       </form>
+    </div>
+  );
+}
+
+const PRIVACY_OPTIONS: { value: TrustMode | null; label: string; hint: string }[] = [
+  { value: null, label: 'Auto', hint: 'Inklink picks from your document: sensitive or unreadable documents always run Private.' },
+  { value: 'verified', label: 'Verified', hint: 'At least verifiable execution (the model provider may still see the text).' },
+  { value: 'private', label: 'Private', hint: 'Sealed inference inside a TEE: no one, not even the provider, sees your document.' },
+];
+
+/** Lets the customer ask for a stricter 0G trust mode. It can never lower the required one. */
+function PrivacyBar({ job, onChange, disabled }: { job: JobView; onChange: (m: TrustMode | null) => void; disabled: boolean }) {
+  const sel = job.privacy.selection;
+  const current = job.privacy.requestedTrustMode === 'standard' ? null : job.privacy.requestedTrustMode;
+  return (
+    <div className="flex flex-wrap items-center gap-2 px-3 pt-2 text-xs">
+      <span className="flex items-center gap-1 text-graphite"><Lock className="h-3.5 w-3.5" aria-hidden="true" />Privacy</span>
+      <div role="radiogroup" aria-label="Inference privacy" className="flex rounded-full bg-white p-0.5 shadow-sm">
+        {PRIVACY_OPTIONS.map((o) => (
+          <button key={o.label} type="button" role="radio" aria-checked={current === o.value} title={o.hint} disabled={disabled}
+            onClick={() => onChange(o.value)}
+            className={`rounded-full px-2.5 py-1 ${current === o.value ? 'bg-ink text-paper' : 'text-ink hover:bg-light-grey'}`}>
+            {o.label}
+          </button>
+        ))}
+      </div>
+      {sel && (
+        <span className="text-graphite" title={sel.reason}>
+          Last run: <span className="font-medium text-ink">{sel.effectiveTrustMode}</span>
+          {sel.effectiveTrustMode !== sel.requiredTrustMode ? ` (required ${sel.requiredTrustMode})` : ''}
+        </span>
+      )}
     </div>
   );
 }

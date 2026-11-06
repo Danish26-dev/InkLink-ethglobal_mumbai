@@ -15,6 +15,6 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
 // PWA: static shell only (see public/sw.js). Skipped in dev so HMR is unaffected.
 if ('serviceWorker' in navigator && import.meta.env.PROD) {
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register('/sw.js').catch(() => undefined);
+    navigator.serviceWorker.register('/sw.js', { scope: '/' }).catch(() => undefined);
   });
 }

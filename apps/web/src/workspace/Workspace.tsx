@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { ArrowLeft, RotateCcw, TriangleAlert } from 'lucide-react';
 import type { JobView } from '@inklink/shared-schemas';
@@ -19,8 +19,9 @@ const REFRESH_ON = new Set(['job_status_updated', 'approval_required', 'document
  * Agent Workspace: watch the print operator configure the real printer.
  * The cursor, menus and values are driven only by backend tool events.
  */
-export function Workspace({ auth }: { auth: AuthKind }) {
-  const { jobId } = useParams<{ jobId: string }>();
+export function Workspace({ auth, jobId: forcedJobId, headerExtra }: { auth: AuthKind; jobId?: string; headerExtra?: ReactNode }) {
+  const params = useParams<{ jobId: string }>();
+  const jobId = forcedJobId ?? params.jobId;
   const reducedMotion = useReducedMotion();
   const { events, state: stream } = useJobEvents(jobId, auth);
   const playback = usePlayback(events, true);
@@ -54,17 +55,17 @@ export function Workspace({ auth }: { auth: AuthKind }) {
     }
   }, [auth, state.run?.outcome]);
 
-  const back = auth === 'shop' ? '/shop/orders' : `/chat/${jobId}`;
+  const back = auth === 'shop' ? '/shop/jobs' : job ? `/app/chat/${job.shopId}?job=${jobId}` : '/app/jobs';
   const unavailable = state.run?.outcome === 'unavailable';
 
   return (
     <div className="flex h-full flex-col bg-paper">
       <header className="flex items-center gap-4 border-b border-light-grey bg-white px-5 py-3">
         <Link to={back} className="btn-ghost px-2.5 py-1.5" aria-label="Back"><ArrowLeft className="h-4 w-4" /></Link>
-        <Logo />
+        <Logo to={auth === 'shop' ? '/shop' : '/app'} />
         <div className="h-5 w-px bg-light-grey" />
         <h1 className="text-sm font-medium">Agent Workspace</h1>
-        <span className="font-mono text-[11px] text-graphite">{jobId}</span>
+        {headerExtra ?? <span className="font-mono text-[11px] text-graphite">{jobId}</span>}
         <div className="ml-auto flex items-center gap-3">
           {playback.backlog > 0 && <span className="font-mono text-[11px] text-graphite">{playback.backlog} queued</span>}
           <button type="button" className="btn-ghost px-3 py-1.5 text-xs" onClick={playback.restart}
@@ -81,14 +82,14 @@ export function Workspace({ auth }: { auth: AuthKind }) {
       {error && <p className="bg-signal/10 px-5 py-2 text-sm" role="alert">{error}</p>}
 
       <div className="grid min-h-0 flex-1 grid-cols-1 grid-rows-[1fr_210px] lg:grid-cols-[280px_1fr_300px]">
-        <div className="hidden min-h-0 lg:flex"><AgentPanel state={state} agentAvailable={agent.available} agentReason={agent.reason} /></div>
+        <div className="hidden min-h-0 lg:flex"><AgentPanel state={state} job={job} agentAvailable={agent.available} agentReason={agent.reason} /></div>
 
         <main ref={stageRef} className="relative flex min-h-0 flex-col items-center justify-center overflow-auto p-6" aria-label="Printer configuration">
           {unavailable && (
             <div className="mb-4 flex w-full max-w-[760px] items-start gap-3 rounded-lg border border-signal/40 bg-signal/10 p-3 text-sm" role="alert">
               <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0 text-signal" aria-hidden="true" />
               <div>
-                <p className="font-medium">Print operator unavailable. No printer settings were changed.</p>
+                <p className="font-medium">Print operator did not run. No printer settings were changed and the document was not sent to any model.</p>
                 <p className="text-graphite">{state.run?.finishMessage}</p>
               </div>
             </div>

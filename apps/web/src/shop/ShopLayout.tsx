@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState, type FormEvent } from 'react';
 import { NavLink, Outlet, useOutletContext } from 'react-router-dom';
-import { Bot, Inbox, LayoutGrid, Loader2, LogOut, Printer, QrCode, Settings } from 'lucide-react';
+import { Bot, Inbox, LayoutGrid, Loader2, LogOut, MonitorPlay, Printer, QrCode, Settings, Wallet } from 'lucide-react';
 import type { ShopOverview } from '@inklink/shared-schemas';
 import { api, ApiError, errorMessage, shopToken } from '../lib/api';
 import { Logo } from '../components/Logo';
@@ -14,15 +14,19 @@ export const useShop = () => useOutletContext<ShopContext>();
 
 const NAV = [
   { to: '/shop', label: 'Overview', icon: LayoutGrid, end: true },
-  { to: '/shop/orders', label: 'Incoming orders', icon: Inbox },
-  { to: '/shop/printers', label: 'Printers & devices', icon: Printer },
+  { to: '/shop/jobs', label: 'Incoming orders', icon: Inbox },
+  { to: '/shop/agent', label: 'Agent Workspace', icon: MonitorPlay },
+  { to: '/shop/hardware', label: 'Hardware', icon: Printer },
+  { to: '/shop/payments', label: 'Payments', icon: Wallet },
   { to: '/shop/settings', label: 'Shop configuration', icon: Settings },
   { to: '/shop/pairing', label: 'Pair Inklink app', icon: QrCode },
 ];
 
 /** Shopkeeper dashboard shell: dark sidebar with availability, agent and printer status. */
 export function ShopLayout() {
-  const [authed, setAuthed] = useState(Boolean(shopToken.get()));
+  // On the shop computer the backend allows tokenless access; elsewhere the
+  // first request fails with 401/403 and the token form appears.
+  const [authed, setAuthed] = useState(true);
   const [overview, setOverview] = useState<ShopOverview | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [toggling, setToggling] = useState(false);
@@ -32,7 +36,7 @@ export function ShopLayout() {
       setOverview(await api.shop.overview());
       setError(null);
     } catch (e) {
-      if (e instanceof ApiError && (e.status === 401 || e.status === 403)) {
+      if (e instanceof ApiError && (e.status === 401 || e.status === 403 || e.code === 'UNAUTHORIZED')) {
         shopToken.clear();
         setAuthed(false);
       }
@@ -83,7 +87,19 @@ export function ShopLayout() {
             </button>
           </div>
           <StatusLine icon={Bot} label="Agent" ok={overview?.agent.available}
-            text={overview ? (overview.agent.available ? `${overview.agent.provider}${overview.agent.trustMode ? ` · ${overview.agent.trustMode}` : ''}` : 'unavailable') : '…'} />
+            text={overview ? (overview.agent.available ? (overview.agent.provider === '0g-private-computer' ? '0G' : overview.agent.provider) : 'unavailable') : '…'} />
+          {overview && (
+            <div className="flex items-center gap-1 pt-1.5 text-[10px]" aria-label="0G keys configured">
+              <span className="text-paper/60">0G keys</span>
+              <span className="ml-auto flex gap-1">
+                {(['standard', 'verified', 'private'] as const).map((m) => (
+                  <span key={m} className={`rounded px-1.5 py-0.5 font-mono ${overview.agent.zeroG.modes[m].configured ? 'bg-emerald-500/20 text-emerald-300' : 'bg-white/10 text-paper/40 line-through'}`}>
+                    {m.slice(0, 3)}
+                  </span>
+                ))}
+              </span>
+            </div>
+          )}
           <StatusLine icon={Printer} label="Printer" ok={overview ? overview.printerAdapter.reachable && onlinePrinters > 0 : undefined}
             text={overview ? (overview.printerAdapter.reachable ? `${onlinePrinters} online` : 'adapter offline') : '…'} />
         </div>
@@ -93,17 +109,21 @@ export function ShopLayout() {
             <NavLink key={to} to={to} end={end}
               className={({ isActive }) => `flex items-center gap-3 rounded-md px-3 py-2 text-sm transition-colors ${isActive ? 'bg-white/10 text-paper' : 'text-paper/65 hover:bg-white/5 hover:text-paper'}`}>
               <Icon className="h-4 w-4" aria-hidden="true" />{label}
-              {to === '/shop/orders' && overview && overview.stats.awaitingApproval > 0 && (
+              {to === '/shop/jobs' && overview && overview.stats.awaitingApproval > 0 && (
                 <span className="ml-auto rounded-full bg-signal px-1.5 font-mono text-[10px]">{overview.stats.awaitingApproval}</span>
               )}
             </NavLink>
           ))}
         </nav>
 
-        <button type="button" className="m-3 flex items-center gap-2 rounded-md px-3 py-2 text-sm text-paper/60 hover:bg-white/5"
-          onClick={() => { shopToken.clear(); setAuthed(false); setOverview(null); }}>
-          <LogOut className="h-4 w-4" aria-hidden="true" />Lock dashboard
-        </button>
+        {shopToken.get() ? (
+          <button type="button" className="m-3 flex items-center gap-2 rounded-md px-3 py-2 text-sm text-paper/60 hover:bg-white/5"
+            onClick={() => { shopToken.clear(); setAuthed(false); setOverview(null); }}>
+            <LogOut className="h-4 w-4" aria-hidden="true" />Lock dashboard
+          </button>
+        ) : (
+          <p className="m-3 px-3 py-2 text-[11px] text-paper/45">Open on this shop computer. Other devices need the shop admin token.</p>
+        )}
       </aside>
 
       <main className="min-w-0 flex-1 overflow-y-auto">

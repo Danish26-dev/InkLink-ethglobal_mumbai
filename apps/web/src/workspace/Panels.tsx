@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react';
-import { Bot, Check, Circle, Cpu, Loader2, ShieldCheck, TriangleAlert } from 'lucide-react';
+import { Bot, Check, Circle, Cpu, Loader2, Lock, ShieldCheck, TriangleAlert } from 'lucide-react';
 import type { JobView, OperatorEvent } from '@inklink/shared-schemas';
 import { PHASE_LABEL, TOOL_LABEL, type OperatorState, type Phase } from '../lib/operatorState';
 import { COLOR_LABEL, ORIENTATION_LABEL, PAPER_LABEL, SIDES_LABEL } from './PrinterDialog';
@@ -21,8 +21,8 @@ const STEPS: { label: string; phases: Phase[] }[] = [
   { label: 'Printing', phases: ['printing', 'completed'] },
 ];
 
-export function AgentPanel({ state, agentAvailable, agentReason }: {
-  state: OperatorState; agentAvailable: boolean | null; agentReason?: string | null;
+export function AgentPanel({ state, job, agentAvailable, agentReason }: {
+  state: OperatorState; job: JobView | null; agentAvailable: boolean | null; agentReason?: string | null;
 }) {
   const run = state.run;
   const current = STEPS.findIndex((s) => s.phases.includes(state.phase));
@@ -67,6 +67,8 @@ export function AgentPanel({ state, agentAvailable, agentReason }: {
         )}
       </section>
 
+      <PrivacySection job={job} />
+
       <section>
         <p className="label-mono mb-2">Task</p>
         <p className="text-sm leading-relaxed">{run?.instruction || <span className="text-graphite">No instruction yet. Send a message from the conversation.</span>}</p>
@@ -98,6 +100,44 @@ export function AgentPanel({ state, agentAvailable, agentReason }: {
       )}
     </aside>
   );
+}
+
+const MODE_LABEL: Record<string, string> = { standard: 'Standard', verified: 'Verified', private: 'Private' };
+
+/** 0G trust-mode decision for this job and the last call's verification result (real data only). */
+function PrivacySection({ job }: { job: JobView | null }) {
+  const sel = job?.privacy.selection;
+  const last = job?.privacy.lastInference;
+  if (!sel && !last) return null;
+  return (
+    <section>
+      <p className="label-mono mb-2">0G trust mode</p>
+      {sel && (
+        <>
+          <p className="flex items-center gap-2 text-sm font-medium">
+            <Lock className="h-4 w-4 text-ink" aria-hidden="true" />
+            {MODE_LABEL[sel.effectiveTrustMode] ?? sel.effectiveTrustMode}
+            {sel.raisedBy && <span className="font-mono text-[10px] font-normal text-graphite">raised by {sel.raisedBy}</span>}
+          </p>
+          <p className="mt-1 text-xs text-graphite">Required: {MODE_LABEL[sel.requiredTrustMode]} · {sel.reason}</p>
+          {sel.error && <p className="mt-1 text-xs text-signal">{sel.error.message}</p>}
+        </>
+      )}
+      {last && (
+        <p className={`mt-2 text-xs ${last.ok ? 'text-ink' : 'text-signal'}`}>
+          {last.ok
+            ? last.teeVerified === true
+              ? `TEE verified by 0G · ${shortAddr(last.provider)}`
+              : 'Standard tier · no attestation'
+            : `Last call failed · ${last.errorCode}`}
+        </p>
+      )}
+    </section>
+  );
+}
+
+function shortAddr(a?: string | null) {
+  return a ? `${a.slice(0, 6)}…${a.slice(-4)}` : 'provider not reported';
 }
 
 /* ───────────── right: config, document, readiness, gates ───────────── */

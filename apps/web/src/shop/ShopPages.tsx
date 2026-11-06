@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState, type FormEvent } from 'react';
 import { Link } from 'react-router-dom';
 import QRCode from 'qrcode';
 import { Check, Circle, Loader2, MonitorPlay, RefreshCw } from 'lucide-react';
-import type { JobView, PrinterSummary, ShopConfig } from '@inklink/shared-schemas';
+import type { JobView, ShopConfig, ShopHardware, ShopPayments, TrustMode } from '@inklink/shared-schemas';
 import { api, errorMessage } from '../lib/api';
 import { COLOR_LABEL, PAPER_LABEL, SIDES_LABEL } from '../workspace/PrinterDialog';
 import { useShop } from './ShopLayout';
@@ -39,7 +39,9 @@ export function ShopOverviewPage() {
           value={overview.acceptingOrders ? 'Accepting orders' : 'Paused'} detail="Toggle in the sidebar." />
         <StatusCard title="Print operator" ok={overview.agent.available}
           value={overview.agent.available ? 'Available' : 'Unavailable'}
-          detail={overview.agent.available ? `${overview.agent.provider}${overview.agent.model ? ` · ${overview.agent.model}` : ''}${overview.agent.trustMode ? ` · trust ${overview.agent.trustMode}` : ''}` : overview.agent.reason ?? ''} />
+          detail={overview.agent.available
+            ? `${overview.agent.provider} · 0G keys: ${(['standard', 'verified', 'private'] as const).filter((m) => overview.agent.zeroG.modes[m].configured).join(', ') || 'none'}`
+            : overview.agent.reason ?? ''} />
         <StatusCard title="Printer adapter" ok={overview.printerAdapter.reachable}
           value={overview.printerAdapter.reachable ? `${overview.printerAdapter.printers.length} printer(s)` : 'Not reachable'}
           detail={overview.printerAdapter.error ?? `${overview.printerAdapter.printers.filter((p) => p.status === 'online').length} online`} />
@@ -185,7 +187,7 @@ function OrdersTable({ jobs, compact, onApprove, onComplete }: {
                 )}
                 <td className="px-4 py-3">
                   <div className="flex flex-col items-end gap-2">
-                    <Link to={`/shop/jobs/${j.jobId}/workspace`} className="btn-ghost px-2.5 py-1.5 text-xs">
+                    <Link to={`/shop/agent/${j.jobId}`} className="btn-ghost px-2.5 py-1.5 text-xs">
                       <MonitorPlay className="h-3.5 w-3.5" aria-hidden="true" />Workspace
                     </Link>
                     {onApprove && !j.shopApproved && !['completed', 'cancelled', 'failed'].includes(j.status) && (
@@ -223,29 +225,52 @@ function Gate({ ok, label }: { ok: boolean; label: string }) {
   );
 }
 
-/* ───────────── Printers ───────────── */
+/* ───────────── Hardware ───────────── */
 
-export function ShopPrintersPage() {
-  const [data, setData] = useState<{ reachable: boolean; printers: PrinterSummary[]; defaultPrinter: string | null; error: string | null } | null>(null);
+export function ShopHardwarePage() {
+  const [data, setData] = useState<ShopHardware | null>(null);
   const [busy, setBusy] = useState(false);
   const scan = useCallback(async () => {
     setBusy(true);
     try {
-      setData(await api.shop.printers());
+      setData(await api.shop.hardware());
     } catch (e) {
-      setData({ reachable: false, printers: [], defaultPrinter: null, error: errorMessage(e) });
+      setData({ printerAdapter: { reachable: false, printers: [], defaultPrinter: null, error: errorMessage(e), url: '' }, jobs: [] });
     } finally {
       setBusy(false);
     }
   }, []);
   useEffect(() => void scan(), [scan]);
+  const adapter = data?.printerAdapter;
 
   return (
-    <Page title="Printers & devices" subtitle="Printers installed on this shop computer, discovered through the local printer adapter."
+    <Page title="Hardware" subtitle="The local printer adapter on this computer, the printers it discovers, and jobs at the printer."
       actions={<button type="button" className="btn-ghost" onClick={scan} disabled={busy}><RefreshCw className={`h-4 w-4 ${busy ? 'animate-spin' : ''}`} aria-hidden="true" />Discover</button>}>
-      {data && !data.reachable && <p className="mb-4 rounded-md bg-signal/10 p-3 text-sm" role="alert">Printer adapter not reachable: {data.error}</p>}
+      {adapter && (
+        <div className="card mb-4 flex items-center gap-3 p-4 text-sm">
+          <span className={`h-2.5 w-2.5 rounded-full ${adapter.reachable ? 'bg-emerald-500' : 'bg-signal'}`} />
+          <span className="font-medium">Printer adapter {adapter.reachable ? 'reachable' : 'not reachable'}</span>
+          <span className="font-mono text-xs text-graphite">{adapter.url}</span>
+          {!adapter.reachable && <span className="text-signal">{adapter.error}</span>}
+        </div>
+      )}
+      {data && data.jobs.length > 0 && (
+        <div className="card mb-4 p-4">
+          <p className="label-mono mb-2">At the printer</p>
+          <ul className="space-y-1 text-sm">
+            {data.jobs.map((j) => (
+              <li key={j.jobId} className="flex flex-wrap gap-3">
+                <span className="font-mono text-xs">{j.jobId}</span>
+                <StatusPill status={j.status} />
+                <span className="text-xs text-graphite">device {j.deviceStatus}{j.printerId ? ` · ${j.printerId}` : ''}</span>
+                {j.submission && <span className="text-xs text-graphite">spooler: {j.submission.state}</span>}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
       <div className="grid gap-4 md:grid-cols-2">
-        {data?.printers.map((p) => (
+        {adapter?.printers.map((p) => (
           <div key={p.id} className="card p-4">
             <div className="flex items-center gap-2">
               <span className={`h-2.5 w-2.5 rounded-full ${p.status === 'online' ? 'bg-emerald-500' : p.status === 'offline' ? 'bg-signal' : 'bg-graphite'}`} />
@@ -260,8 +285,66 @@ export function ShopPrintersPage() {
             </dl>
           </div>
         ))}
-        {data?.reachable && data.printers.length === 0 && <p className="card p-6 text-sm text-graphite">No printers found on this computer.</p>}
+        {adapter?.reachable && adapter.printers.length === 0 && <p className="card p-6 text-sm text-graphite">No printers found on this computer.</p>}
       </div>
+    </Page>
+  );
+}
+
+/* ───────────── Payments ───────────── */
+
+export function ShopPaymentsPage() {
+  const [data, setData] = useState<ShopPayments | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    const load = () => api.shop.payments().then(setData, (e) => setError(errorMessage(e)));
+    void load();
+    const t = setInterval(load, 8000);
+    return () => clearInterval(t);
+  }, []);
+  return (
+    <Page title="Payments" subtitle="Hedera x402 payments are authorized in the customer's Inklink app. A payment shows as settled only after the backend verified the signed settlement.">
+      {error && <p className="mb-3 rounded-md bg-signal/10 p-3 text-sm" role="alert">{error}</p>}
+      {data && (
+        <>
+          <div className="grid gap-4 md:grid-cols-3">
+            <StatusCard title="Payments" ok={data.configured} value={data.configured ? 'Configured' : 'Not configured'}
+              detail={data.configured ? `${data.settlementAsset} on ${data.network}` : 'Set the payment env vars on the backend (see .env.example).'} />
+            <StatusCard title="Merchant account" ok={Boolean(data.merchantAccountId)} value={data.merchantAccountId ?? 'Not set'} detail="Hedera account that receives USDC." />
+            <StatusCard title="INR → USDC rate" ok={Boolean(data.inrToUsdcRate)} value={data.inrToUsdcRate ?? 'Not set'} detail="Configured rate used for quotes." />
+          </div>
+          <h2 className="label-mono mb-3 mt-8">Payments</h2>
+          {data.payments.length === 0 ? <p className="card p-6 text-sm text-graphite">No payments yet.</p> : (
+            <div className="card overflow-x-auto">
+              <table className="w-full text-left text-sm">
+                <thead className="border-b border-light-grey">
+                  <tr className="label-mono"><th className="px-4 py-3 font-normal">Payment</th><th className="px-4 py-3 font-normal">Order</th>
+                    <th className="px-4 py-3 font-normal">Amount</th><th className="px-4 py-3 font-normal">Status</th><th className="px-4 py-3 font-normal">Hedera</th></tr>
+                </thead>
+                <tbody className="divide-y divide-light-grey">
+                  {data.payments.map((p) => (
+                    <tr key={p.paymentId}>
+                      <td className="px-4 py-3 font-mono text-xs">{p.paymentId}</td>
+                      <td className="px-4 py-3 font-mono text-xs">{p.jobId}</td>
+                      <td className="px-4 py-3">{p.amountUsdc} USDC{p.amountInr ? <span className="text-xs text-graphite"> · ₹{p.amountInr}</span> : null}</td>
+                      <td className="px-4 py-3"><span className="rounded-full bg-light-grey px-2 py-0.5 font-mono text-[11px]">{p.status}</span></td>
+                      <td className="px-4 py-3">{p.hashscanUrl ? <a href={p.hashscanUrl} target="_blank" rel="noreferrer" className="text-signal underline">{p.transactionId}</a> : <span className="text-graphite">—</span>}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+          <h2 className="label-mono mb-3 mt-8">Waiting for payment</h2>
+          {data.awaitingPayment.length === 0 ? <p className="text-sm text-graphite">None.</p> : (
+            <ul className="space-y-1 text-sm">
+              {data.awaitingPayment.map((j) => (
+                <li key={j.jobId} className="flex gap-3"><span className="font-mono text-xs">{j.jobId}</span><span>{j.amountInr ? `₹${j.amountInr}` : 'no quote'}</span><span className="text-graphite">payment {j.paymentStatus}</span></li>
+              ))}
+            </ul>
+          )}
+        </>
+      )}
     </Page>
   );
 }
@@ -278,8 +361,8 @@ export function ShopSettingsPage() {
   const [status, setStatus] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   useEffect(() => {
-    api.shop.config().then(({ name, description, pricePerPageMonochrome, pricePerPageColor }) =>
-      setCfg({ name, description, pricePerPageMonochrome, pricePerPageColor }), (e) => setStatus(errorMessage(e)));
+    api.shop.config().then(({ name, description, pricePerPageMonochrome, pricePerPageColor, minimumTrustMode }) =>
+      setCfg({ name, description, pricePerPageMonochrome, pricePerPageColor, minimumTrustMode: minimumTrustMode ?? null }), (e) => setStatus(errorMessage(e)));
   }, []);
   const save = async (e: FormEvent) => {
     e.preventDefault();
@@ -297,7 +380,7 @@ export function ShopSettingsPage() {
     }
   };
   if (!cfg) return <Page title="Shop configuration">{status ? <p className="text-sm text-signal">{status}</p> : <Loader2 className="h-5 w-5 animate-spin text-graphite" />}</Page>;
-  const field = (key: keyof ShopConfig, label: string, props: React.InputHTMLAttributes<HTMLInputElement> = {}) => (
+  const field = (key: 'name' | 'description' | 'pricePerPageMonochrome' | 'pricePerPageColor', label: string, props: React.InputHTMLAttributes<HTMLInputElement> = {}) => (
     <div>
       <label htmlFor={`cfg-${key}`} className="label-mono">{label}</label>
       <input id={`cfg-${key}`} value={cfg[key]} onChange={(e) => setCfg({ ...cfg, [key]: e.target.value })} {...props}
@@ -312,6 +395,17 @@ export function ShopSettingsPage() {
         <div className="grid grid-cols-2 gap-4">
           {field('pricePerPageMonochrome', 'Black & white · ₹ per page', { inputMode: 'decimal', pattern: '\\d{1,6}(\\.\\d{1,2})?', required: true })}
           {field('pricePerPageColor', 'Colour · ₹ per page', { inputMode: 'decimal', pattern: '\\d{1,6}(\\.\\d{1,2})?', required: true })}
+        </div>
+        <div>
+          <label htmlFor="cfg-trust" className="label-mono">Minimum 0G trust mode</label>
+          <select id="cfg-trust" value={cfg.minimumTrustMode ?? ''}
+            onChange={(e) => setCfg({ ...cfg, minimumTrustMode: (e.target.value || null) as TrustMode | null })}
+            className="mt-1 w-full rounded-md border border-light-grey bg-white px-3 py-2 text-sm focus:border-ink focus:outline-none">
+            <option value="">Follow the document policy (sensitive → Private)</option>
+            <option value="verified">At least Verified</option>
+            <option value="private">Always Private</option>
+          </select>
+          <p className="mt-1 text-xs text-graphite">This can only make inference stricter. Sensitive and unclassified documents always use Private.</p>
         </div>
         <div className="flex items-center gap-3">
           <button type="submit" className="btn-primary" disabled={busy}>{busy && <Loader2 className="h-4 w-4 animate-spin" />}Save</button>

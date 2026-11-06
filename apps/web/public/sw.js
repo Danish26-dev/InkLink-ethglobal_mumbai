@@ -1,8 +1,10 @@
-/* Inklink service worker.
- * Caches the static app shell only. Never caches /api: job state, documents,
- * quotes and the event stream must always come from the backend. */
-const CACHE = 'inklink-shell-v1';
-const SHELL = ['/', '/index.html', '/icon.svg', '/manifest.webmanifest'];
+/* Inklink service worker (served at /sw.js, scope /).
+ * Caches the PWA's static shell only. Never caches /api: job state, documents,
+ * quotes and the event stream must always come from the backend. The landing
+ * page at / is passed through untouched. */
+const CACHE = 'inklink-shell-v2';
+const SHELL = ['/pwa/', '/pwa/icon.svg', '/pwa/manifest.webmanifest'];
+const PWA_ROUTE = /^\/(app|shop|demo)(\/|$)/;
 
 self.addEventListener('install', (event) => {
   event.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting()));
@@ -23,13 +25,13 @@ self.addEventListener('fetch', (event) => {
   if (req.method !== 'GET' || url.origin !== self.location.origin) return;
   if (url.pathname.startsWith('/api')) return; // network only, never cached
 
-  // Navigations: network first, fall back to the cached shell when offline.
+  // PWA navigations: network first, cached shell when offline.
   if (req.mode === 'navigate') {
-    event.respondWith(fetch(req).catch(() => caches.match('/index.html')));
+    if (PWA_ROUTE.test(url.pathname)) event.respondWith(fetch(req).catch(() => caches.match('/pwa/')));
     return;
   }
-  // Static assets (hashed by Vite): cache first, then network and store.
-  if (url.pathname.startsWith('/assets/') || SHELL.includes(url.pathname)) {
+  // PWA static assets (hashed by Vite): cache first.
+  if (url.pathname.startsWith('/pwa/')) {
     event.respondWith(
       caches.match(req).then(
         (hit) =>

@@ -2,12 +2,12 @@
   "name": "Inklink",
   "short_name": "Inklink",
   "description": "Send a document to a local print shop. The Inklink print operator configures the printer for you.",
-  "start_url": "/",
+  "start_url": "/app",
   "scope": "/",
   "display": "standalone",
   "background_color": "#FAFAF7",
   "theme_color": "#111111",
   "icons": [
-    { "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+    { "src": "/pwa/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
   ]
 }

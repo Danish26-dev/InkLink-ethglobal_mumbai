@@ -1,9 +1,9 @@
 import { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { ChevronRight, Loader2, Printer, Store } from 'lucide-react';
 import type { ShopChannel } from '@inklink/shared-schemas';
 import { api, errorMessage } from '../lib/api';
-import { recentJobs, rememberJob } from '../lib/recent';
+import { recentJobs } from '../lib/recent';
 import { Logo } from '../components/Logo';
 
 /** Customer home: pick a print shop. No login, no wallet. */
@@ -18,17 +18,9 @@ export function ShopList() {
     api.shops().then(setShops, (e) => setError(errorMessage(e)));
   }, []);
 
-  const open = async (shop: ShopChannel) => {
+  const open = (shop: ShopChannel) => {
     setOpening(shop.shopId);
-    setError(null);
-    try {
-      const job = await api.createJob(shop.shopId);
-      rememberJob({ jobId: job.jobId, shopId: shop.shopId, shopName: shop.name, createdAt: job.createdAt });
-      navigate(`/chat/${job.jobId}`);
-    } catch (e) {
-      setError(errorMessage(e));
-      setOpening(null);
-    }
+    navigate(`/app/chat/${encodeURIComponent(shop.shopId)}`);
   };
 
   return (
@@ -68,11 +60,14 @@ export function ShopList() {
 
         {recent.length > 0 && (
           <>
-            <h2 className="label-mono mb-3 mt-8">Your orders in this tab</h2>
+            <div className="mb-3 mt-8 flex items-center">
+              <h2 className="label-mono">Your orders in this tab</h2>
+              <Link to="/app/jobs" className="ml-auto text-xs text-signal underline">Track orders</Link>
+            </div>
             <ul className="space-y-2">
               {recent.map((j) => (
                 <li key={j.jobId}>
-                  <button type="button" onClick={() => navigate(`/chat/${j.jobId}`)} className="flex w-full items-center gap-3 rounded-lg px-2 py-2 text-left hover:bg-light-grey/60">
+                  <button type="button" onClick={() => navigate(`/app/chat/${encodeURIComponent(j.shopId)}?job=${j.jobId}`)} className="flex w-full items-center gap-3 rounded-lg px-2 py-2 text-left hover:bg-light-grey/60">
                     <Printer className="h-4 w-4 text-graphite" aria-hidden="true" />
                     <span className="text-sm">{j.shopName}</span>
                     <span className="ml-auto font-mono text-[11px] text-graphite">{j.jobId}</span>
