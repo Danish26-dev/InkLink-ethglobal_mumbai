@@ -220,6 +220,18 @@ def test_only_status_fields_of_real_jobs_reach_the_gateway(env):
     assert len(forwarded) == 1
     assert forwarded[0]["jobId"] == "job_real" and forwarded[0]["payload"] == {"status": "executing"}
 
+    # Settlement proof is forwarded only for a verified ("settled") payment event.
+    gateway_relay._relay.events.clear()
+    gateway_relay.on_event({"jobId": "job_real", "type": "payment_status_updated",
+                            "payload": {"status": "processing", "transactionId": None, "amount": "0.05"}})
+    gateway_relay.on_event({"jobId": "job_real", "type": "payment_status_updated",
+                            "payload": {"status": "settled", "transactionId": "0.0.1@1.2", "network": "hedera:testnet",
+                                        "amount": "0.05", "verifiedAt": "v", "paymentId": "pay_x"}})
+    first, second = [e["payload"] for e in gateway_relay._relay.events]
+    assert first == {"status": "processing"}
+    assert second == {"status": "settled", "transactionId": "0.0.1@1.2", "network": "hedera:testnet",
+                      "amount": "0.05", "verifiedAt": "v"}
+
 
 # ───────────── bootstrap shopkeeper (Cloud Run has no shell) ─────────────
 

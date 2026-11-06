@@ -16,7 +16,7 @@ from .clients import ServiceError, call_payment_agent, validate_print_config
 from .config import get_settings
 from .jobs import add_message, pending_gates, quote_contract, quote_expired, try_execute
 from .security import hashscan_for, verify_callback
-from .store import PaymentRecord, Principal, get_store, iso_from_epoch, new_id
+from .store import PaymentRecord, Principal, get_store, iso_from_epoch, new_id, now_iso
 
 router = APIRouter(prefix="/api/v1")
 _B64URL = re.compile(r"^[A-Za-z0-9_-]+$")
@@ -233,8 +233,15 @@ async def payment_settled(request: Request) -> dict[str, Any]:
             store.touch(job)
         store.save()
     if job:
+        # Only verified values: the callback was HMAC-checked and every field matched above.
         events.publish(job.job_id, "payment_status_updated",
-                       {"paymentId": rec.payment_id, "status": "settled", "transactionId": tx, "hashscanUrl": rec.hashscan_url}, source="payment")
+                       {"paymentId": rec.payment_id, "status": "settled", "transactionId": tx, "hashscanUrl": rec.hashscan_url,
+                        "network": "hedera:testnet", "amount": rec.amount_usdc, "asset": "HTS_USDC",
+                        # settledAt: consensus time the agent verified on the mirror node;
+                        # verifiedAt: when this backend verified the signed callback.
+                        "settledAt": e.get("settlementTimestamp") if isinstance(e.get("settlementTimestamp"), str) else None,
+                        "verifiedAt": now_iso()},
+                       source="payment")
         events.publish_job_status(job)
         # Queued only now, after the signed settlement was verified. Reference by hash only.
         chain.queue("payment_verified", job.job_id, {"hederaTxCommitment": chain.commitment(tx), "network": "hedera:testnet"})

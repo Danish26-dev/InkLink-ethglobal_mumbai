@@ -98,11 +98,27 @@ export function createGateway(cfg, { fetchImpl = fetch, log = console } = {}) {
       if (!e || typeof e.jobId !== 'string') continue;
       const prev = state.jobs.get(e.jobId) ?? { jobId: e.jobId };
       const p = e.payload ?? {};
+      // In payment_status_updated, `status` is the PAYMENT status, not the job status.
+      const isPayment = e.type === 'payment_status_updated';
       const next = {
         ...prev,
-        ...(typeof p.status === 'string' ? { status: p.status } : {}),
+        ...(!isPayment && typeof p.status === 'string' ? { status: p.status } : {}),
+        ...(isPayment && typeof p.status === 'string' ? { paymentStatus: p.status } : {}),
         ...(typeof p.paymentStatus === 'string' ? { paymentStatus: p.paymentStatus } : {}),
         ...(typeof p.deviceStatus === 'string' ? { deviceStatus: p.deviceStatus } : {}),
+        // Settlement proof: the backend forwards these only after verifying the signed callback.
+        ...(e.type === 'payment_status_updated' && p.status === 'settled' && typeof p.transactionId === 'string'
+          ? {
+              payment: {
+                transactionId: p.transactionId,
+                network: p.network ?? null,
+                amount: p.amount ?? null,
+                settledAt: p.settledAt ?? null,
+                verifiedAt: p.verifiedAt ?? null,
+                hashscanUrl: p.hashscanUrl ?? null,
+              },
+            }
+          : {}),
         ...(e.type === 'execution_authorized' ? { authorized: true } : {}),
         updatedAt: e.ts ?? new Date().toISOString(),
       };
