@@ -8,7 +8,19 @@ const port = Number.parseInt(process.env.PORT || '4000', 10);
 const host = process.env.HOST || '127.0.0.1';
 const status = providerStatus();
 
-app.listen(port, host, () => {
+// Graceful shutdown: Cloud Run / docker send SIGTERM (node runs as PID 1 in the image,
+// which has no default signal handling). Stop accepting connections, let in-flight
+// runs finish briefly, then exit.
+function shutdown(signal: string): void {
+  // eslint-disable-next-line no-console
+  console.log(`[inklink-agent] ${signal} received, shutting down`);
+  server.close(() => process.exit(0));
+  setTimeout(() => process.exit(0), 8_000).unref();
+}
+process.once('SIGTERM', () => shutdown('SIGTERM'));
+process.once('SIGINT', () => shutdown('SIGINT'));
+
+const server = app.listen(port, host, () => {
   // Log non-secret settings only. Never log credentials.
   // eslint-disable-next-line no-console
   console.log(`[inklink-agent] listening on http://${host}:${port}`);

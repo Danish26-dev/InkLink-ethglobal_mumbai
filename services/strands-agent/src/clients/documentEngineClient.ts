@@ -10,6 +10,7 @@
  */
 // Node 18+/22+ provides global fetch, FormData, and Blob (undici under the hood).
 import type { OperationPlan } from '../schema.js';
+import { serviceAuthHeaders } from './serviceAuth.js';
 
 // The Document Engine URL is a non-secret setting resolved directly from the
 // environment so this client works in tests that don't configure a model.
@@ -36,10 +37,11 @@ const PROCESS_TIMEOUT_MS = Number(process.env.ENGINE_PROCESS_TIMEOUT_MS ?? 165_0
  * ENGINE_TIMEOUT error so the orchestrator can surface a clean, specific
  * failure instead of hanging indefinitely. */
 async function fetchWithTimeout(url: string, init: RequestInit, ms: number): Promise<Response> {
+  const auth = await serviceAuthHeaders(url);
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), ms);
   try {
-    return await fetch(url, { ...init, signal: controller.signal });
+    return await fetch(url, { ...init, headers: { ...(init.headers as Record<string, string> | undefined), ...auth }, signal: controller.signal });
   } catch (err: any) {
     if (err?.name === 'AbortError') {
       throw new DocumentEngineError({
@@ -132,7 +134,8 @@ function fileForm(fileBuffer: Buffer, filename: string, extra: Record<string, st
 
 export const documentEngine = {
   async supportedOperations(): Promise<string[]> {
-    const res = await fetch(`${documentEngineUrl()}/operations`);
+    const url = `${documentEngineUrl()}/operations`;
+    const res = await fetch(url, { headers: await serviceAuthHeaders(url) });
     if (!res.ok) throw new DocumentEngineError(await parseError(res));
     const body = (await res.json()) as { supported_operations: string[] };
     return body.supported_operations;
@@ -166,7 +169,8 @@ export const documentEngine = {
 
   async health(): Promise<boolean> {
     try {
-      const res = await fetch(`${documentEngineUrl()}/health`);
+      const url = `${documentEngineUrl()}/health`;
+      const res = await fetch(url, { headers: await serviceAuthHeaders(url) });
       return res.ok;
     } catch {
       return false;
