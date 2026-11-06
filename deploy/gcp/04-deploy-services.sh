@@ -101,6 +101,8 @@ elif (( DEPLOY_PAYMENTS )); then
     "NODE_ENV=production"
     "AGENT_STATE_FILE=/data/agent-state.json"
     "ALLOWED_RESOURCE_ORIGINS=${GATE_URL}"
+    # The agent discovers the paid endpoint itself from the gate's discovery document.
+    "X402_GATE_ORIGIN=${GATE_URL}"
     "BACKEND_EVENT_URL=${BACKEND_URL}/api/v1/internal/payment-settled"
     "HEDERA_AGENT_ACCOUNT_ID=${HEDERA_AGENT_ACCOUNT_ID}"
     "MERCHANT_ID=${MERCHANT_ID:-shop_001}"
