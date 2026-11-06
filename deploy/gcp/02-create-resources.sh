@@ -60,31 +60,48 @@ for sa in "${SA_BACKEND}" "${SA_AGENT}" "${SA_ENGINE}" "${SA_PAYMENT}" "${SA_GAT
 done
 
 step "IAM bindings (resource level, least privilege)"
+# New service accounts need a short while before IAM accepts them; wait, then retry.
+for sa in "${SA_BACKEND}" "${SA_AGENT}" "${SA_ENGINE}" "${SA_PAYMENT}" "${SA_GATE}" "${SA_WEB}" "${SA_BUILD}"; do
+  wait_for_sa "$(sa_email "${sa}")"
+done
+bucket_role() { # bucket sa role
+  gcloud storage buckets add-iam-policy-binding "gs://$1" \
+    --member="serviceAccount:$(sa_email "$2")" --role="$3" >/dev/null
+}
 # Runtime data: each service only reaches its own bucket.
-gcloud storage buckets add-iam-policy-binding "gs://${BACKEND_BUCKET}" \
-  --member="serviceAccount:$(sa_email "${SA_BACKEND}")" --role=roles/storage.objectUser >/dev/null
+retry 8 10 bucket_role "${BACKEND_BUCKET}" "${SA_BACKEND}" roles/storage.objectUser \
+  || die "could not grant objectUser on gs://${BACKEND_BUCKET}"
 ok "${SA_BACKEND} → objectUser on gs://${BACKEND_BUCKET}"
-gcloud storage buckets add-iam-policy-binding "gs://${PAYMENT_BUCKET}" \
-  --member="serviceAccount:$(sa_email "${SA_PAYMENT}")" --role=roles/storage.objectUser >/dev/null
+retry 8 10 bucket_role "${PAYMENT_BUCKET}" "${SA_PAYMENT}" roles/storage.objectUser \
+  || die "could not grant objectUser on gs://${PAYMENT_BUCKET}"
 ok "${SA_PAYMENT} → objectUser on gs://${PAYMENT_BUCKET}"
 
 # Builds: read the uploaded source, push images, write build logs.
-gcloud storage buckets add-iam-policy-binding "gs://${BUILD_BUCKET}" \
-  --member="serviceAccount:$(sa_email "${SA_BUILD}")" --role=roles/storage.objectViewer >/dev/null
+retry 8 10 bucket_role "${BUILD_BUCKET}" "${SA_BUILD}" roles/storage.objectViewer \
+  || die "could not grant objectViewer on gs://${BUILD_BUCKET}"
 ok "${SA_BUILD} → objectViewer on gs://${BUILD_BUCKET}"
-gc artifacts repositories add-iam-policy-binding "${AR_REPO}" --location="${REGION}" \
-  --member="serviceAccount:$(sa_email "${SA_BUILD}")" --role=roles/artifactregistry.writer >/dev/null
+ar_writer() {
+  gc artifacts repositories add-iam-policy-binding "${AR_REPO}" --location="${REGION}" \
+    --member="serviceAccount:$(sa_email "${SA_BUILD}")" --role=roles/artifactregistry.writer >/dev/null
+}
+retry 8 10 ar_writer || die "could not grant artifactregistry.writer on ${AR_REPO}"
 ok "${SA_BUILD} → artifactregistry.writer on ${AR_REPO}"
-if gc projects add-iam-policy-binding "${PROJECT_ID}" --condition=None \
-     --member="serviceAccount:$(sa_email "${SA_BUILD}")" --role=roles/logging.logWriter >/dev/null 2>&1; then
+log_writer() {
+  gc projects add-iam-policy-binding "${PROJECT_ID}" --condition=None \
+    --member="serviceAccount:$(sa_email "${SA_BUILD}")" --role=roles/logging.logWriter >/dev/null 2>&1
+}
+if retry 8 10 log_writer; then
   ok "${SA_BUILD} → logging.logWriter (project)"
 else
   warn "could not grant roles/logging.logWriter to ${SA_BUILD} (needs resourcemanager.projectIamAdmin). Ask a project owner, or builds cannot write logs."
 fi
 # The deployer must be able to run builds as, and deploy services as, these accounts.
-for sa in "${SA_BACKEND}" "${SA_AGENT}" "${SA_ENGINE}" "${SA_PAYMENT}" "${SA_GATE}" "${SA_WEB}" "${SA_BUILD}"; do
-  gc iam service-accounts add-iam-policy-binding "$(sa_email "${sa}")" \
+sa_user() {
+  gc iam service-accounts add-iam-policy-binding "$(sa_email "$1")" \
     --member="user:${DEPLOY_ACCOUNT}" --role=roles/iam.serviceAccountUser >/dev/null
+}
+for sa in "${SA_BACKEND}" "${SA_AGENT}" "${SA_ENGINE}" "${SA_PAYMENT}" "${SA_GATE}" "${SA_WEB}" "${SA_BUILD}"; do
+  retry 8 10 sa_user "${sa}" || die "could not grant serviceAccountUser on ${sa}"
 done
 ok "${DEPLOY_ACCOUNT} → serviceAccountUser on the Inklink service accounts"
 

@@ -139,6 +139,28 @@ payments_ready() {
   [[ -n "${HEDERA_AGENT_ACCOUNT_ID:-}" && -n "${MERCHANT_ACCOUNT_ID:-}" ]]
 }
 
+# Retry a command: a newly created service account takes a while to be visible to
+# other Google APIs ("Service account ... does not exist" right after creation).
+retry() { # attempts delay_seconds command...
+  local attempts="$1" delay="$2" i
+  shift 2
+  for ((i = 1; i <= attempts; i++)); do
+    if "$@"; then return 0; fi
+    (( i < attempts )) && { warn "not ready yet, retrying in ${delay}s (${i}/${attempts})"; sleep "${delay}"; }
+  done
+  return 1
+}
+
+# Wait until a service account is usable by IAM policy bindings.
+wait_for_sa() { # email
+  local i
+  for ((i = 1; i <= 12; i++)); do
+    gc iam service-accounts describe "$1" >/dev/null 2>&1 && return 0
+    sleep 5
+  done
+  die "service account $1 is still not visible after 60 s"
+}
+
 # Grant one role on one Cloud Run service (idempotent).
 grant_invoker() { # service member
   gc run services add-iam-policy-binding "$1" --region="${REGION}" \

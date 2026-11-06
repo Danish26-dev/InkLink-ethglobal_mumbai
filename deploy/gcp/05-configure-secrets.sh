@@ -58,8 +58,44 @@ add_version() { # name ; value on stdin
   fi
 }
 
+# Drop anything typed or pasted BEFORE a prompt appeared. Without this, a paste made
+# while gcloud was still running is echoed on screen and consumed by the next prompts.
+flush_input() {
+  local _junk
+  while IFS= read -r -s -t 0.2 _junk; do :; done 2>/dev/null || true
+  unset _junk
+}
+
+ask() { # prompt -> REPLY_VALUE (visible y/N answers only)
+  flush_input
+  REPLY_VALUE=""
+  read -r -p "  $1 " REPLY_VALUE || true
+}
+
+# Returns an error message when the value cannot be right for this secret.
+invalid_reason() { # name value
+  local name="$1" value="$2"
+  case "${name}" in
+    ZERO_G_*_API_KEY)
+      [[ "${value}" == sk-* && ${#value} -ge 20 ]] || { echo "0G keys start with 'sk-'"; return; } ;;
+    BOOTSTRAP_SHOPKEEPER_PASSWORD)
+      (( ${#value} >= 10 )) || { echo "must be at least 10 characters"; return; }
+      [[ "${value}" != sk-* ]] || { echo "this looks like a 0G API key, not a password"; return; } ;;
+    HEDERA_AGENT_PRIVATE_KEY)
+      [[ "${value}" =~ ^(0x)?[0-9a-fA-F]{64}$ || "${value}" =~ ^[0-9a-fA-F]{96,100}$ ]] \
+        || { echo "expected a Hedera private key (64 hex characters, or DER hex starting 302e/3030)"; return; } ;;
+    *)
+      (( ${#value} >= 16 )) || { echo "must be at least 16 characters"; return; } ;;
+  esac
+  return 0
+}
+
+# ONLY=NAME1,NAME2 limits this run to those secrets (e.g. to correct a wrong value).
+ONLY_LIST=",${ONLY:-},"
+
 for entry in "${SECRETS[@]}"; do
   IFS='|' read -r name kind desc <<<"${entry}"
+  if [[ -n "${ONLY:-}" && "${ONLY_LIST}" != *",${name},"* ]]; then continue; fi
   step "${name} — ${desc}"
   if secret_has_version "${name}"; then
     ok "already has a value"
@@ -68,13 +104,17 @@ for entry in "${SECRETS[@]}"; do
     fi
     # Never rotate unattended (YES=1 keeps every existing value).
     [[ "${YES:-0}" == "1" ]] && continue
-    answer=""
-    read -r -p "  Add a NEW version of ${name}? [y/N] " answer
-    [[ "${answer}" =~ ^[Yy]$ ]] || continue
+    ask "Add a NEW version of ${name}? [y/N]"
+    [[ "${REPLY_VALUE}" =~ ^[Yy]$ ]] || continue
   fi
   case "${kind}" in
     generate|hexkey)
-      if [[ "${kind}" == "generate" ]] && ! confirm "Generate a random value for ${name}? (n = type one)"; then
+      want_generate=1
+      if [[ "${kind}" == "generate" && "${YES:-0}" != "1" ]]; then
+        ask "Generate a random value for ${name}? [Y/n] (n = type one)"
+        [[ "${REPLY_VALUE}" =~ ^[Nn]$ ]] && want_generate=0
+      fi
+      if (( want_generate == 0 )); then
         kind=enter
       else
         openssl rand -hex 32 | tr -d '\n' | add_version "${name}"
@@ -87,21 +127,30 @@ for entry in "${SECRETS[@]}"; do
       fi
       ;;
   esac
-  # kind=enter
-  value=""
-  read -r -s -p "  Enter ${name} (input hidden, empty = skip): " value; echo
-  if [[ -z "${value}" ]]; then
-    warn "skipped (no value stored)"
-    continue
-  fi
-  if [[ "${name}" == "BOOTSTRAP_SHOPKEEPER_PASSWORD" && ${#value} -lt 10 ]]; then
-    warn "must be at least 10 characters; skipped"
-    unset value
-    continue
-  fi
-  printf '%s' "${value}" | add_version "${name}"
+  # kind=enter: paste only AFTER the prompt is shown; nothing appears while you type.
+  stored=0
+  for attempt in 1 2 3; do
+    flush_input
+    value=""
+    read -r -s -p "  Enter ${name} (input hidden, Enter alone = skip): " value || true; echo
+    value="${value#"${value%%[![:space:]]*}"}"; value="${value%"${value##*[![:space:]]}"}"  # trim
+    if [[ -z "${value}" ]]; then
+      warn "skipped (no value stored)"
+      break
+    fi
+    reason="$(invalid_reason "${name}" "${value}")" || true
+    if [[ -n "${reason}" ]]; then
+      warn "not stored: ${reason} (${#value} characters received). Try again."
+      continue
+    fi
+    printf '%s' "${value}" | add_version "${name}"
+    ok "stored (${#value} characters)"
+    stored=1
+    break
+  done
   unset value
-  ok "stored"
+  (( stored )) || [[ -z "${reason:-}" ]] || warn "${name} was not stored"
+  reason=""
 done
 
 step "Secret access (secretAccessor per secret, per service account)"

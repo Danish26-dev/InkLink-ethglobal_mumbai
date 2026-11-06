@@ -84,7 +84,10 @@ bash deploy/gcp/05-configure-secrets.sh
 
 For each secret the script either generates a random value (`openssl rand -hex 32`) or asks you to
 type it with `read -s`: the value is not echoed, not stored in shell history and is piped to gcloud on
-stdin. Have ready: the three 0G API keys (optional), a shopkeeper password (optional, ≥ 10
+stdin. **Paste a value only after its prompt is shown** (anything typed earlier is discarded), paste
+one value at a time, and check the reported character count. Values that cannot be right (a 0G key
+without `sk-`, a short token, a 0G key given as the password) are refused. To correct specific
+secrets later: `ONLY=ZERO_G_PRIVATE_API_KEY,BOOTSTRAP_SHOPKEEPER_PASSWORD bash deploy/gcp/05-configure-secrets.sh`. Have ready: the three 0G API keys (optional), a shopkeeper password (optional, ≥ 10
 characters) and, for payments, the Hedera testnet agent private key. The script then grants each
 service account access to only the secrets it uses.
 
