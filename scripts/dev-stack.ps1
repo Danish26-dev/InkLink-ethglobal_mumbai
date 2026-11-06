@@ -30,6 +30,21 @@ $env:AGENT_URL = 'http://127.0.0.1:4000'
 $env:PRINTER_AGENT_URL = 'http://127.0.0.1:7777'
 $env:DOCUMENT_ENGINE_URL = 'http://127.0.0.1:5001'
 
+# An old server still holding a port would keep answering with stale configuration
+# (for example an old backend without the 0G keys). Stop instead of starting a duplicate.
+$ports = @{ 7777 = 'printer adapter'; 5001 = 'document engine'; 4000 = 'print operator'; 8000 = 'backend'; 5174 = 'pwa'; 5173 = 'landing + proxy' }
+$busy = foreach ($p in $ports.Keys) {
+  Get-NetTCPConnection -LocalPort $p -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1 | ForEach-Object {
+    $proc = Get-CimInstance Win32_Process -Filter "ProcessId = $($_.OwningProcess)"
+    "  port $p ($($ports[$p])) is used by pid $($_.OwningProcess): $($proc.CommandLine)"
+  }
+}
+if ($busy) {
+  Write-Host "Some Inklink ports are already in use. Stop those processes first (or close their windows):" -ForegroundColor Yellow
+  $busy | ForEach-Object { Write-Host $_ }
+  exit 1
+}
+
 function Start-Service($title, $dir, $cmd) {
   Start-Process powershell -WorkingDirectory (Join-Path $root $dir) -ArgumentList '-NoExit', '-Command', "`$Host.UI.RawUI.WindowTitle='$title'; $cmd"
 }
