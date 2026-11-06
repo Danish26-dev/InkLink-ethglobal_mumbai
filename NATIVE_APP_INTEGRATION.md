@@ -74,7 +74,7 @@ Expo is not containerised; it runs on the developer machine / EAS.
 ## Checks run for this change
 
 - `npm run typecheck` (app + tools) passes.
-- `npm test`: 43 tests pass, including 4 new cloud-origin tests (accepted and ordered after LAN
+- `npm test`: 67 tests pass (with the OfflinePay and print-options tests from `main`), including 4 new cloud-origin tests (accepted and ordered after LAN
   addresses, non-https or path-bearing origins rejected, tampering breaks the signature, build
   fallback appended once and only when https).
 - Not run: an Android build or a device test (no Android tooling or device on the development
