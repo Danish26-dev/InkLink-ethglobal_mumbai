@@ -325,6 +325,11 @@ export class OfflineLedger {
       .map((r) => structuredCloneSafe(r));
   }
 
+  /** The policy this ledger enforces (limits are reported in audit entries). */
+  get limits(): OfflinePayPolicy {
+    return { ...this.policy };
+  }
+
   /** Unsettled total for a device. Failed settlements still count: the shop is unpaid. */
   outstanding(devicePublicKey: string): DecimalString {
     let sum = 0n;
@@ -344,13 +349,15 @@ export class OfflineLedger {
    * (`duplicate: true`, nothing counted twice). The same voucherId with different content,
    * or a second voucher for an already-covered job, is refused.
    */
-  accept(raw: unknown): { record: OfflinePaymentRecord; duplicate: boolean } {
+  accept(raw: unknown, opts: { verifyAt?: Date } = {}): { record: OfflinePaymentRecord; duplicate: boolean } {
     const now = this.now();
+    // `verifyAt` lets the settling side check the time window as of when the shop accepted
+    // the voucher (vouchers are settled after they stop being acceptable offline).
     const v = verifyOfflineVoucher(raw, {
       verify: this.opts.verify,
       merchantId: this.opts.merchantId,
       policy: this.policy,
-      now,
+      now: opts.verifyAt ?? now,
     });
 
     const existing = this.records.get(v.voucherId);

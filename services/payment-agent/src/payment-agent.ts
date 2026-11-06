@@ -24,6 +24,7 @@ import type {
   InitiatePaymentResponse,
   PaymentPolicy,
   PaymentSettledEvent,
+  PaymentStatus,
   PaymentStatusResponse,
 } from "@inklink/shared-schemas";
 import { AGENT_ID, loadHederaConfig, resolveMerchantAccount } from "./config.js";
@@ -80,8 +81,76 @@ function consensusToIso(ts: string | undefined): string {
   return new Date(ms).toISOString();
 }
 
+export interface VoucherPaymentInput {
+  /** Supplied by the backend; becomes the paymentId of the settlement and its callback. */
+  paymentId: string;
+  voucherId: string;
+  jobId: string;
+  quoteId: string;
+  merchantId: string;
+  amount: string;
+  resourceUrl: string;
+  budget: { maxPerTransaction: string; totalSpendingLimit: string; spentToDate: string };
+}
+
 export class PaymentAgent {
   private readonly agentId: string;
+  private readonly finishedListeners = new Set<(paymentId: string) => void>();
+
+  /** Called once a payment reaches a final local outcome (settled or failed). */
+  onPaymentFinished(listener: (paymentId: string) => void): () => void {
+    this.finishedListeners.add(listener);
+    return () => this.finishedListeners.delete(listener);
+  }
+
+  private notifyFinished(paymentId: string) {
+    for (const l of this.finishedListeners) {
+      try {
+        l(paymentId);
+      } catch (err) {
+        console.warn(`[payment ${paymentId}] outcome listener failed: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
+  }
+
+  /**
+   * Start a payment authorized by an OfflinePay voucher (already verified and recorded by
+   * the caller). Same gate, same exact-match x402 signing, same mirror-node verification,
+   * callback and audit entry as an online payment. Throws before writing anything if the
+   * resource or merchant is not allowed.
+   */
+  startVoucherPayment(input: VoucherPaymentInput, now: Date = new Date()): { paymentId: string; status: PaymentStatus } {
+    const existing = paymentStore.get(input.paymentId);
+    if (existing) {
+      if (existing.offlineVoucherId === input.voucherId) return { paymentId: existing.paymentId, status: existing.status };
+      throw new PaymentError("PAYMENT_ID_CONFLICT", "paymentId is already used by another payment");
+    }
+    this.assertResourceAllowed(input.resourceUrl, input.jobId);
+    const payTo = resolveMerchantAccount(input.merchantId);
+    if (!payTo) {
+      throw new PaymentError("POLICY_VIOLATION", "No Hedera payout account is registered for this merchant");
+    }
+    const record: PaymentRecord = {
+      paymentId: input.paymentId,
+      jobId: input.jobId,
+      quoteId: input.quoteId,
+      authorizationId: `offline:${input.voucherId}`,
+      offlineVoucherId: input.voucherId,
+      budgetSnapshot: { ...input.budget },
+      merchantId: input.merchantId,
+      payTo,
+      amount: input.amount,
+      asset: SETTLEMENT_ASSET,
+      status: "processing",
+      paymentReference: crypto.randomUUID(),
+      transactionId: null,
+      settlementTimestamp: null,
+      createdAt: now.toISOString(),
+    };
+    paymentStore.put(record, `offline:${input.voucherId}:${input.paymentId}`);
+    void this.runSettlement(record, payTo, input.resourceUrl);
+    return { paymentId: record.paymentId, status: "processing" };
+  }
 
   constructor(
     private readonly x402: X402Client,
@@ -379,6 +448,7 @@ export class PaymentAgent {
     // Background: retries with backoff must never block or undo the settlement.
     void this.sendCallback(record.paymentId, event);
     if (this.opts.audit) void this.publishAudit(record.paymentId);
+    this.notifyFinished(record.paymentId);
   }
 
   /**
@@ -398,7 +468,7 @@ export class PaymentAgent {
           agentId: this.agentId,
           merchantId: rec.merchantId,
           authorizationId: rec.authorizationId,
-          budget: {
+          budget: rec.budgetSnapshot ?? {
             maxPerTransaction: policy?.maxPerTransaction ?? "unknown",
             totalSpendingLimit: policy?.totalSpendingLimit ?? "unknown",
             spentToDate: policy?.spentToDate ?? "unknown",
@@ -474,7 +544,9 @@ export class PaymentAgent {
     paymentStore.update(record.paymentId, {
       status: "failed",
       failureReason: reason.slice(0, 300),
+      fundsMayHaveMoved: !releaseReservation,
     });
+    queueMicrotask(() => this.notifyFinished(record.paymentId));
     // Operators need to know why. Reasons never contain keys or signatures.
     console.warn(
       `[payment ${record.paymentId}] failed (${releaseReservation ? "spend released" : "spend KEPT, funds may have moved"}): ${reason.slice(0, 200)}`,

@@ -1,3 +1,4 @@
+import path from "node:path";
 import dotenv from "dotenv";
 
 dotenv.config();
@@ -63,6 +64,11 @@ export const serviceConfig = {
    * Unset = audit log off; payments work the same either way.
    */
   auditTopicId: optional("HCS_AUDIT_TOPIC_ID", "") || null,
+  /** OfflinePay voucher ledger. Defaults to the same directory as the agent state file. */
+  offlineLedgerFile: optional(
+    "OFFLINE_LEDGER_FILE",
+    path.join(path.dirname(optional("AGENT_STATE_FILE", ".data/agent-state.json")), "offline-ledger.json"),
+  ),
 };
 
 /** Secrets and trust boundaries for the HTTP service. Fails fast if absent. */

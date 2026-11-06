@@ -24,6 +24,12 @@ import { deliverCallback } from "./settlement.js";
 import { SigningService } from "./signing/signing-service.js";
 import { enablePersistence } from "./store.js";
 import { HcsAuditPublisher, hashscanTopicUrl } from "./hcs-audit.js";
+import {
+  OfflineSettlement,
+  createOfflineLedger,
+  isOfflinePayError,
+  type OfflineSettleRequest,
+} from "./offline-settlement.js";
 import { X402Client } from "./x402-client.js";
 
 function errorBody(code: string, message: string) {
@@ -38,6 +44,25 @@ const HTTP_STATUS: Record<string, number> = {
   RESOURCE_NOT_ALLOWED: 403,
   QUOTE_EXPIRED: 410,
   FACILITATOR_UNAVAILABLE: 503,
+  // OfflinePay
+  VOUCHER_MISMATCH: 422,
+  VOUCHER_TOO_OLD: 410,
+  VOUCHER_SETTLEMENT_IN_PROGRESS: 409,
+  PAYMENT_ID_CONFLICT: 409,
+  INVALID_VOUCHER: 400,
+  AMOUNT_INVALID: 400,
+  NOT_YET_VALID: 400,
+  VALIDITY_TOO_LONG: 400,
+  EXPIRED: 400,
+  SIGNATURE_INVALID: 403,
+  WRONG_MERCHANT: 403,
+  OVER_VOUCHER_LIMIT: 403,
+  OVER_OUTSTANDING_LIMIT: 403,
+  REPLAYED: 409,
+  DUPLICATE_JOB: 409,
+  INVALID_TRANSITION: 409,
+  SETTLEMENT_MISMATCH: 409,
+  UNKNOWN_VOUCHER: 404,
 };
 
 function hasStrings(body: unknown, keys: string[]): body is Record<string, string> {
@@ -95,6 +120,11 @@ function main() {
           console.log(`[callback ${event.paymentId}] attempt ${n}: ${outcome}`),
       }),
   });
+
+  // OfflinePay ledger: next to the agent state (on Cloud Run, the same private volume).
+  // Refuses to start on a corrupt file, like the agent state.
+  const offline = new OfflineSettlement(agent, createOfflineLedger(serviceConfig.offlineLedgerFile));
+  console.log(`[payment-agent] OfflinePay ledger at ${serviceConfig.offlineLedgerFile}`);
 
   const app = express();
   app.disable("x-powered-by");
@@ -154,6 +184,40 @@ function main() {
     }
   });
 
+  // OfflinePay — settle a device-signed voucher the backend accepted offline.
+  app.post("/api/v1/offline-payments/settle", async (req, res) => {
+    const body = req.body as Record<string, unknown> | undefined;
+    if (
+      !hasStrings(body, ["paymentId", "jobId", "quoteId", "merchantId", "settlementAmount", "resourceUrl"]) ||
+      typeof body?.voucher !== "object" ||
+      body.voucher === null
+    ) {
+      res.status(400).json(errorBody("POLICY_VIOLATION", "Missing or malformed offline settlement fields"));
+      return;
+    }
+    const f = await facilitatorReady();
+    if (!f.ok) {
+      res.status(503).json(errorBody("FACILITATOR_UNAVAILABLE", "The Blocky402 facilitator is unavailable"));
+      return;
+    }
+    try {
+      res.json(await offline.settle(body as unknown as OfflineSettleRequest));
+    } catch (err) {
+      sendError(res, err);
+    }
+  });
+
+  app.get("/api/v1/offline-payments/:voucherId", (req, res) => {
+    const rec = offline.get(req.params.voucherId);
+    if (!rec) {
+      res.status(404).json(errorBody("UNKNOWN_VOUCHER", "Unknown voucherId"));
+      return;
+    }
+    const { signature, ...voucher } = rec.voucher;
+    void signature;
+    res.json({ ...rec, voucher });
+  });
+
   // Contract 7 — payment status
   app.get("/api/v1/payments/:paymentId", (req, res) => {
     const status = agent.status(req.params.paymentId);
@@ -176,7 +240,7 @@ function main() {
         console.log(
           `[payment-agent] recovery: ${s.reverified} re-verified, ` +
             `${s.outcomeUnknown} outcome-unknown (spend kept), ${s.callbacksResent} callbacks re-sent, ` +
-            `${s.auditsRetried} audit entries retried`,
+            `${s.auditsRetried} audit entries retried, ${offline.syncAll()} offline vouchers reconciled`,
         ),
       )
       .catch((err) =>
@@ -193,8 +257,9 @@ function main() {
 }
 
 function sendError(res: express.Response, err: unknown) {
-  if (err instanceof PaymentError) {
-    res.status(HTTP_STATUS[err.code] ?? 400).json(errorBody(err.code, err.message));
+  if (err instanceof PaymentError || isOfflinePayError(err)) {
+    const status = err.code === "STORAGE_CORRUPT" ? 500 : (HTTP_STATUS[err.code] ?? 400);
+    res.status(status).json(errorBody(err.code, err.message));
     return;
   }
   console.error("[payment-agent] unexpected error:", err instanceof Error ? err.message : err);

@@ -44,6 +44,12 @@ export interface PaymentRecord {
   callbackAttempts?: number;
   /** The exact callback body, kept so an undelivered callback can be re-sent after a restart. */
   event?: PaymentSettledEvent;
+  /** Set on failure: true when a transaction may have been submitted (spend kept, do not retry blindly). */
+  fundsMayHaveMoved?: boolean;
+  /** OfflinePay: the voucher that authorized this payment (instead of an online authorization). */
+  offlineVoucherId?: string;
+  /** Budget state recorded at creation for payments not backed by an online policy (audit log). */
+  budgetSnapshot?: { maxPerTransaction: string; totalSpendingLimit: string; spentToDate: string };
   /** HCS spend audit entry for this settlement (only when an audit topic is configured). */
   auditStatus?: "pending" | "published" | "failed";
   auditTopicId?: string;

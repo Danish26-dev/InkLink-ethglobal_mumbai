@@ -182,7 +182,7 @@ npm run setup:wallet                  # until it says "Ready"
 npm run setup:audit-topic             # once; put the printed id in HCS_AUDIT_TOPIC_ID
 npm run demo:pay                      # real x402 payment; prints the HashScan links
 npm run demo:pay -- --negative        # the agent refuses an amount that does not match
-npm test                              # 84 tests, no network needed
+npm test                              # 92 tests, no network needed
 ```
 
 The shop account must also have USDC associated. For a stand-in shop that you control, run

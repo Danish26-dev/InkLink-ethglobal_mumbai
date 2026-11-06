@@ -256,8 +256,8 @@ implemented exactly as written; unifying them later would be a contract change.
 ## OfflinePay (signed offline authorization) � PROPOSED
 
 Status: core implemented and tested (`packages/shared-schemas/src/offline-pay.ts`, app signer
-`apps/mobile/src/crypto/offline-pay.ts`). The gateway and backend endpoints that carry vouchers
-are **not agreed yet**; nothing below is wired into the live flow.
+`apps/mobile/src/crypto/offline-pay.ts`) and the agent settle endpoint (below) are built and
+tested. The backend endpoint `POST /api/v1/offline-payments` is agreed but not built yet.
 
 An offline voucher is the customer's device-signed promise to pay one job's backend-quoted USDC
 amount when the shop has no internet. It is **not a payment**. It becomes `SETTLED` only after the
@@ -292,7 +292,7 @@ voucher for the same job is `DUPLICATE_JOB`, and the device's unsettled total ma
 `maxOutstanding` (failed settlements still count; the shop is unpaid). The device runs the same
 ledger before signing, so it cannot exceed its limit across shops.
 
-Default policy (proposed): `maxPerVoucher` 2.00 USDC, `maxOutstanding` 5.00 USDC, validity 2 h,
+Default policy (agreed): `maxPerVoucher` 2.00 USDC, `maxOutstanding` 5.00 USDC, validity 2 h,
 clock skew 5 min. The app signs vouchers valid for 30 min.
 
 Reconciliation accepts `SETTLED` only with `transactionVerified: true`, a `verifiedAt`, a Hedera
@@ -310,5 +310,43 @@ signed text: {"amount":"0.10","asset":"USDC","customerReference":"dev__RckOFqgx1
 signature:   cUvdzz9y-8K1IT0U4b89ZzSvasw9bLeTjooCpszEbDF6I3x6yHJI9J7-CP5FgsFpUQ1kE1moD6xG8qV0iDl-AQ
 ```
 
-Open for agreement: the gateway endpoint that accepts a voucher offline, how the backend starts
-settlement for pending vouchers when internet returns, and the final policy limits.
+### Agent endpoint: `POST /api/v1/offline-payments/settle` (agreed, built)
+
+Internal, `Authorization: Bearer <INTERNAL_API_TOKEN>` (plus the Cloud Run ID token in
+`X-Serverless-Authorization`). Called by the backend once internet returns, after it has accepted and
+recorded the voucher itself.
+
+```json
+{ "paymentId": "<backend-assigned, [A-Za-z0-9_-]{1,64}>", "jobId": "...", "quoteId": "...",
+  "merchantId": "shop_001", "settlementAmount": "0.10",
+  "resourceUrl": "<gate>/api/v1/jobs/{jobId}/execute", "voucher": { ... signed voucher ... } }
+```
+
+Response `200 { "paymentId", "voucherId", "status", "voucherState" }`; then poll
+`GET /api/v1/payments/{paymentId}` as for online payments. `GET /api/v1/offline-payments/{voucherId}`
+returns the agent's ledger record.
+
+The agent checks again because it is the only party that can spend:
+
+- the voucher's signature and fields, as of just before its expiry. It can be settled up to 7 days
+  after `expiresAt`; older is `410 VOUCHER_TOO_OLD`.
+- the voucher must match the request exactly (job, quote, merchant, amount). If not, it's
+  `422 VOUCHER_MISMATCH`, and nothing is recorded.
+- its own per-device ledger: replay (`409 REPLAYED`), one voucher per job (`409 DUPLICATE_JOB`) and
+  the unsettled limit (`403 OVER_OUTSTANDING_LIMIT`).
+
+Then it pays through the same gate, with the same exact-match x402 signing and mirror-node
+verification. It sends the **same signed settlement callback**, carrying the backend's `paymentId`,
+and writes the same HCS audit entry.
+
+Retries and double-pay protection:
+
+- **Same request again:** idempotent, with no second payment.
+- **Nothing was submitted** (facilitator refused, or gate or merchant not allowed): the voucher is
+  `SETTLEMENT_FAILED`. Retry it with a **new** `paymentId`; the same one is `409 PAYMENT_ID_CONFLICT`.
+- **Funds may have moved** (a transaction was claimed but is unverified, or a restart interrupted
+  it): the voucher **stays `PENDING_SETTLEMENT`**, and any retry is
+  `409 VOUCHER_SETTLEMENT_IN_PROGRESS`. Only re-verification on the mirror node resolves it, at
+  startup or when the payment is re-checked.
+- **Persistence:** the ledger file (`OFFLINE_LEDGER_FILE`, default next to `AGENT_STATE_FILE`) is
+  saved before each change, and the agent refuses to start if it's corrupt.

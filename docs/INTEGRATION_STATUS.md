@@ -81,7 +81,7 @@ Blocky402 facilitator (24 checks, `npm run headless` in `apps/mobile`):
 - **A real funded settlement through the real backend and the real merchant account.** One testnet
   settlement exists (see above), but it used a stand-in merchant and the demo script.
 - Gateway TLS + certificate/public-key pinning (production).
-- BLE. HCS job-lifecycle events (backend's; the agent already publishes its own spend audit log to topic `0.0.11339168`). OfflinePay is only partly done: the core (signed vouchers, verification, limits, replay protection, persistence, reconciliation) is built and tested, but the gateway and backend endpoints that carry vouchers are not agreed or built. On-device SLM and document editing were dropped from the app (team decision): users pick copies, page range, colour and paper size directly.
+- BLE. HCS job-lifecycle events (backend's; the agent already publishes its own spend audit log to topic `0.0.11339168`). OfflinePay: the core and the agent settle endpoint (`POST /api/v1/offline-payments/settle`) are built and tested. The backend endpoint `POST /api/v1/offline-payments` is agreed but not built yet. On-device SLM and document editing were dropped from the app (team decision): users pick copies, page range, colour and paper size directly.
 - The real backend/gateway integration (waiting on XYZ's implementation).
 
 ## Frozen contracts (team lead, round 3)
