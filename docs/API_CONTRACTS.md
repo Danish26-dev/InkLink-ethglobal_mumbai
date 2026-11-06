@@ -145,6 +145,21 @@ Flow: `POST /jobs` → `POST /documents` → `POST /jobs/{id}/quote` → `POST /
 
 `customerId` on upload is the anonymous `customerReference` (no PII).
 
+### Contract 3 — print configuration
+
+```json
+{ "shopId": "shop_001",
+  "printConfig": { "copies": 1, "pageRange": "all", "colourMode": "grayscale",
+                   "paperSize": "A4", "orientation": "portrait", "sides": "one-sided" } }
+```
+
+- `paperSize`: `A4 | Letter | Legal` (A3 removed: the printer agent does not support it).
+- `orientation`: `portrait | landscape`; `sides`: `one-sided | two-sided-long-edge |
+  two-sided-short-edge`. Same values as the printer agent (`OPERATOR_*`). Optional in the type for
+  older clients; the app always sends them.
+- `colourMode` stays `grayscale | colour`; the backend maps it to the printer's
+  `monochrome | color`. The printer path supports `pageRange: "all"` only for now.
+
 ### Contract 4 — quote with settlement
 
 ```json
@@ -238,7 +253,7 @@ The settlement asset is written three ways, as in the agreed contracts: `USDC` (
 the policy), `HTS-USDC` (quote `settlement.asset`), `HTS_USDC` (callback/registry). They are
 implemented exactly as written; unifying them later would be a contract change.
 
-## OfflinePay (signed offline authorization) � PROPOSED
+## OfflinePay (signed offline authorization) � PROPOSED
 
 Status: core implemented and tested (`packages/shared-schemas/src/offline-pay.ts`, app signer
 `apps/mobile/src/crypto/offline-pay.ts`). The gateway and backend endpoints that carry vouchers

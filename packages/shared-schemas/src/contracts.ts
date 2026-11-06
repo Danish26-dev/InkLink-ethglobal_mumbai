@@ -68,13 +68,22 @@ export interface DocumentUploadResponse {
  * POST /jobs   (CALL THIS FIRST — it returns the authoritative jobId)
  */
 export type ColourMode = "colour" | "grayscale";
-export type PaperSize = "A4" | "A3" | "Letter" | "Legal";
+/** Same sizes the local printer agent supports (OPERATOR_PAPER_SIZES). A3 is not supported. */
+export type PaperSize = "A4" | "Letter" | "Legal";
+/** Same values as OPERATOR_ORIENTATIONS (local printer agent). */
+export type PrintOrientation = "portrait" | "landscape";
+/** Same values as OPERATOR_SIDES (local printer agent). */
+export type PrintSides = "one-sided" | "two-sided-long-edge" | "two-sided-short-edge";
 
 export interface PrintConfig {
   copies: number;
   pageRange: string; // e.g. "1-5" or "all"
-  colourMode: ColourMode;
+  colourMode: ColourMode; // backend maps grayscale -> monochrome, colour -> color
   paperSize: PaperSize;
+  /** Optional for backward compatibility; the app always sends it. */
+  orientation?: PrintOrientation;
+  /** Optional for backward compatibility; the app always sends it. */
+  sides?: PrintSides;
 }
 
 export interface CreateJobRequest {

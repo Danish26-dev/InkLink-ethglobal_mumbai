@@ -24,6 +24,7 @@ import {
   runHandshake,
 } from "@/discovery/pairing";
 import { gatewayCandidates, validateScannedQr } from "@/discovery/qr";
+import { DEFAULT_PRINT_CONFIG } from "@/print-options";
 
 export interface DocumentSelection {
   uri: string;
@@ -44,12 +45,7 @@ export interface JobSession {
   paymentId?: string;
 }
 
-const defaultPrintConfig: PrintConfig = {
-  copies: 1,
-  pageRange: "all",
-  colourMode: "grayscale",
-  paperSize: "A4",
-};
+const defaultPrintConfig: PrintConfig = DEFAULT_PRINT_CONFIG;
 
 interface AppContextValue {
   api: InklinkApi;

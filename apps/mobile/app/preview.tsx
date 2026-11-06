@@ -8,6 +8,7 @@ import { useApp } from "@/state/app-context";
 import type { CreateJobResponse } from "@inklink/shared-schemas";
 import { getDeviceIdentity } from "@/crypto/device-key";
 import { db } from "@/db/database";
+import { COLOUR_OPTIONS, ORIENTATION_OPTIONS, SIDES_OPTIONS, labelFor } from "@/print-options";
 
 export default function Preview() {
   const router = useRouter();
@@ -55,12 +56,12 @@ export default function Preview() {
         idempotencyKey: `${job.jobId}:${document.name}`,
         signal: controller.signal,
         onProgress: (p) => {
-          setRetryNote(p.attempt > 1 ? `Retrying (${p.attempt}/${p.maxAttempts})…` : null);
+          setRetryNote(p.attempt > 1 ? `Retrying (${p.attempt}/${p.maxAttempts})ï¿½` : null);
           if (p.total > 0) setProgress(p.sent / p.total);
         },
         onRetry: (_n, reason) => {
           setProgress(0);
-          setRetryNote(`${reason}. Retrying…`);
+          setRetryNote(`${reason}. Retryingï¿½`);
         },
       });
       setProgress(null);
@@ -110,8 +111,10 @@ export default function Preview() {
         <Row k="Document" v={document?.name ?? "â€”"} />
         <Row k="Copies" v={String(printConfig.copies)} />
         <Row k="Pages" v={printConfig.pageRange} />
-        <Row k="Colour" v={printConfig.colourMode} />
+        <Row k="Colour" v={labelFor(COLOUR_OPTIONS, printConfig.colourMode)} />
         <Row k="Paper" v={printConfig.paperSize} />
+        <Row k="Orientation" v={labelFor(ORIENTATION_OPTIONS, printConfig.orientation)} />
+        <Row k="Sides" v={labelFor(SIDES_OPTIONS, printConfig.sides)} />
       </Card>
 
       {session.quote ? (

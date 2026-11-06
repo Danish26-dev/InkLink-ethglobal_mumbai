@@ -1,4 +1,4 @@
-// Screen 5 — Print Configuration (copies, page range, colour, paper)
+// Screen 5 — Print Configuration (copies, page range, colour, paper, orientation, sides)
 import { useState } from "react";
 import { View, Text, TextInput, StyleSheet, Pressable } from "react-native";
 import { useRouter } from "expo-router";
@@ -6,6 +6,13 @@ import type { PrintConfig } from "@inklink/shared-schemas";
 import { Screen, Heading, Body, Button, Card } from "@/components/ui";
 import { colors, radius, spacing, type } from "@/theme";
 import { useApp } from "@/state/app-context";
+import {
+  COLOUR_OPTIONS,
+  ORIENTATION_OPTIONS,
+  PAPER_OPTIONS,
+  SIDES_OPTIONS,
+  type Option,
+} from "@/print-options";
 
 export default function Configure() {
   const router = useRouter();
@@ -30,18 +37,15 @@ export default function Configure() {
         <Field label="Page range">
           <TextInput value={cfg.pageRange} onChangeText={(t) => set("pageRange", t)} style={styles.inlineInput} />
         </Field>
+        <Choice label="Colour" options={COLOUR_OPTIONS} value={cfg.colourMode} onChange={(v) => set("colourMode", v)} />
+        <Choice label="Paper" options={PAPER_OPTIONS} value={cfg.paperSize} onChange={(v) => set("paperSize", v)} />
         <Choice
-          label="Colour"
-          options={["grayscale", "colour"]}
-          value={cfg.colourMode}
-          onChange={(v) => set("colourMode", v as PrintConfig["colourMode"])}
+          label="Orientation"
+          options={ORIENTATION_OPTIONS}
+          value={cfg.orientation ?? "portrait"}
+          onChange={(v) => set("orientation", v)}
         />
-        <Choice
-          label="Paper"
-          options={["A4", "A3", "Letter", "Legal"]}
-          value={cfg.paperSize}
-          onChange={(v) => set("paperSize", v as PrintConfig["paperSize"])}
-        />
+        <Choice label="Sides" options={SIDES_OPTIONS} value={cfg.sides ?? "one-sided"} onChange={(v) => set("sides", v)} />
       </Card>
 
       <Button label="Review job" onPress={next} />
@@ -75,28 +79,31 @@ function Stepper({ label, value, onChange }: { label: string; value: number; onC
   );
 }
 
-function Choice({
+function Choice<T extends string>({
   label,
   options,
   value,
   onChange,
 }: {
   label: string;
-  options: string[];
-  value: string;
-  onChange: (v: string) => void;
+  options: Option<T>[];
+  value: T;
+  onChange: (v: T) => void;
 }) {
   return (
     <View style={[styles.row, { flexWrap: "wrap" }]}>
       <Body>{label}</Body>
-      <View style={{ flexDirection: "row", flexWrap: "wrap" }}>
+      <View style={{ flexDirection: "row", flexWrap: "wrap", justifyContent: "flex-end", flexShrink: 1 }}>
         {options.map((o) => (
           <Pressable
-            key={o}
-            onPress={() => onChange(o)}
-            style={[styles.chip, value === o && styles.chipActive]}
+            key={o.value}
+            onPress={() => onChange(o.value)}
+            accessibilityRole="radio"
+            accessibilityState={{ selected: value === o.value }}
+            accessibilityLabel={`${label}: ${o.label}`}
+            style={[styles.chip, value === o.value && styles.chipActive]}
           >
-            <Text style={{ color: value === o ? colors.paperWhite : colors.inkBlack }}>{o}</Text>
+            <Text style={{ color: value === o.value ? colors.paperWhite : colors.inkBlack }}>{o.label}</Text>
           </Pressable>
         ))}
       </View>
