@@ -17,7 +17,7 @@ import {
   type HarnessEvent,
   type OperatorPrintConfig,
 } from '@inklink/shared-schemas';
-import { buildModel, providerStatus, ModelUnavailableError } from '../model/providers.js';
+import { buildModel, providerStatus, ModelUnavailableError, type InferenceGrant } from '../model/providers.js';
 import { buildTools, type DocumentContext } from '../tools/documentTools.js';
 import { toAgentError } from '../errors.js';
 import { buildOperatorTools, emitEvent, type OperatorRunContext } from './operatorTools.js';
@@ -60,6 +60,8 @@ export interface OperatorRunRequest {
   defaults: Partial<OperatorPrintConfig>;
   /** Configuration already confirmed earlier for this job (continues from here). */
   current?: Partial<OperatorPrintConfig>;
+  /** Backend-issued 0G inference grant (trust mode chosen by the backend's policy). */
+  inference?: InferenceGrant | null;
   emit: (event: HarnessEvent) => void;
 }
 
@@ -93,7 +95,7 @@ export async function runPrintOperator(req: OperatorRunRequest): Promise<void> {
 
   let model;
   try {
-    model = buildModel();
+    model = buildModel(req.inference ?? null);
   } catch (err) {
     emitEvent(ctx, 'agent_finished', {
       runId: req.runId,
@@ -138,8 +140,8 @@ export async function runPrintOperator(req: OperatorRunRequest): Promise<void> {
   emitEvent(ctx, 'agent_started', {
     runId: req.runId,
     provider: status.provider === 'vertex-ai' ? 'vertex-ai' : '0g-private-computer',
-    model: status.model ?? 'unknown',
-    trustMode: status.provider === 'vertex-ai' ? null : status.trustMode,
+    model: req.inference?.model ?? status.model ?? 'unknown',
+    trustMode: status.provider === 'vertex-ai' ? null : (req.inference?.trustMode ?? null),
     instruction: req.instruction.slice(0, 2000),
   });
 

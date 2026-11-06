@@ -12,7 +12,7 @@ import type { AddressInfo } from 'node:net';
 import { EMPTY_OPERATOR_CONFIG, type HarnessEvent } from '@inklink/shared-schemas';
 import { buildOperatorTools, type OperatorRunContext } from '../../src/harness/operatorTools.js';
 import { installOperatorHooks, domainFailure } from '../../src/harness/hooks.js';
-import { providerStatus, buildModel, zeroGHeaders, ModelUnavailableError } from '../../src/model/providers.js';
+import { providerStatus, buildModel, parseGrant, ModelUnavailableError } from '../../src/model/providers.js';
 import { runPrintOperator } from '../../src/harness/operator.js';
 
 let server: http.Server;
@@ -282,31 +282,38 @@ const VERTEX_PRESENT = {
   VERTEX_AI_MODEL_ID: 'gemini-2.5-flash',
 };
 
-test('0G is the default provider and reports unavailable without credentials, even if Vertex is configured', () => {
-  withEnv({ INKLINK_MODEL_PROVIDER: undefined, ZEROG_API_KEY: undefined, ZEROG_MODEL_ID: undefined, ...VERTEX_PRESENT }, () => {
+const GRANT = {
+  baseUrl: 'http://127.0.0.1:8000/api/v1/internal/inference/v1',
+  token: 'igr_test_grant',
+  model: 'glm-5.3',
+  trustMode: 'private',
+};
+
+test('0G is the default provider, brokered by the backend; without a grant it cannot run and never falls back to Vertex', () => {
+  withEnv({ INKLINK_MODEL_PROVIDER: undefined, ...VERTEX_PRESENT }, () => {
     const s = providerStatus();
     assert.equal(s.provider, '0g-private-computer');
-    assert.equal(s.available, false);
-    assert.match(s.reason ?? '', /ZEROG_API_KEY/);
-    assert.throws(() => buildModel(), ModelUnavailableError, 'must not fall back to Vertex');
+    assert.equal(s.brokered, true);
+    assert.throws(() => buildModel(null), ModelUnavailableError, 'must not fall back to Vertex');
   });
 });
 
-test('configured 0G is available, requests private mode by default, and status never contains the key', () => {
-  withEnv({ INKLINK_MODEL_PROVIDER: '0g-private-computer', ZEROG_API_KEY: 'sk-test-secret-value', ZEROG_MODEL_ID: 'glm-5-fp8', ZEROG_TRUST_MODE: undefined }, () => {
-    const s = providerStatus();
-    assert.equal(s.available, true);
-    assert.equal(s.trustMode, 'private');
-    assert.ok(!JSON.stringify(s).includes('sk-test-secret-value'));
-    assert.deepEqual(zeroGHeaders('private'), { 'X-0G-Provider-Trust-Mode': 'private' });
-    assert.ok(buildModel());
+test('a valid backend grant builds the model; the agent holds no 0G key', () => {
+  withEnv({ INKLINK_MODEL_PROVIDER: '0g-private-computer', BACKEND_URL: 'http://127.0.0.1:8000', ZERO_G_PRIVATE_API_KEY: undefined }, () => {
+    const grant = parseGrant(JSON.stringify(GRANT));
+    assert.ok(grant);
+    assert.equal(grant!.trustMode, 'private');
+    assert.ok(buildModel(grant));
+    assert.ok(!JSON.stringify(providerStatus()).includes('igr_test_grant'));
   });
 });
 
-test('trust mode is validated and standard sends no override header', () => {
-  assert.deepEqual(zeroGHeaders('standard'), {});
-  withEnv({ INKLINK_MODEL_PROVIDER: undefined, ZEROG_API_KEY: 'k', ZEROG_MODEL_ID: 'm', ZEROG_TRUST_MODE: 'yolo' }, () => {
-    assert.equal(providerStatus().available, false);
+test('grants with an unknown trust mode or a foreign gateway are rejected', () => {
+  withEnv({ BACKEND_URL: 'http://127.0.0.1:8000' }, () => {
+    assert.equal(parseGrant(JSON.stringify({ ...GRANT, trustMode: 'yolo' })), null);
+    assert.equal(parseGrant(JSON.stringify({ ...GRANT, baseUrl: 'https://evil.example/v1' })), null);
+    assert.equal(parseGrant('not json'), null);
+    assert.equal(parseGrant(undefined), null);
   });
 });
 
@@ -316,9 +323,9 @@ test('unknown providers are unavailable', () => {
   });
 });
 
-test('an operator run with an unavailable provider ends with agent_finished(unavailable) and calls no tools', async () => {
+test('an operator run without an inference grant ends with agent_finished(unavailable) and calls no tools', async () => {
   const events: HarnessEvent[] = [];
-  await withEnv({ INKLINK_MODEL_PROVIDER: undefined, ZEROG_API_KEY: undefined, ZEROG_MODEL_ID: undefined }, () =>
+  await withEnv({ INKLINK_MODEL_PROVIDER: undefined }, () =>
     runPrintOperator({
       jobId: 'job_1',
       runId: 'run_x',

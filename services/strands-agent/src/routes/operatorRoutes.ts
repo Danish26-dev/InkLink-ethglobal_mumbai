@@ -8,6 +8,8 @@
  *   runId        backend-assigned run id
  *   defaults?    JSON Partial<OperatorPrintConfig> (shop defaults)
  *   current?     JSON Partial<OperatorPrintConfig> (already confirmed values)
+ *   inference?   JSON InferenceGrant {baseUrl, token, model, trustMode} for the
+ *                backend's 0G gateway (required for 0g-private-computer)
  *
  * Response: `application/x-ndjson`, one HarnessEvent per line, streamed while
  * the run progresses. The stream always ends with an `agent_finished` event.
@@ -20,6 +22,7 @@ import { Router, type Request, type Response } from 'express';
 import multer from 'multer';
 import type { HarnessEvent, OperatorPrintConfig } from '@inklink/shared-schemas';
 import { runPrintOperator } from '../harness/operator.js';
+import { parseGrant } from '../model/providers.js';
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 50 * 1024 * 1024 } });
 const router = Router();
@@ -79,6 +82,8 @@ router.post('/runs', upload.single('file'), async (req: Request, res: Response) 
       document: req.file ? { buffer: req.file.buffer, filename: req.file.originalname || 'document' } : null,
       defaults: parseConfig(req.body?.defaults),
       current: parseConfig(req.body?.current),
+      // Per-run 0G inference grant from the backend (no 0G key); null if absent or invalid.
+      inference: parseGrant(req.body?.inference),
       emit,
     });
   } catch {
