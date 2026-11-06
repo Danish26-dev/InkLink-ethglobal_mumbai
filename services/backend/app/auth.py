@@ -231,6 +231,16 @@ async def web_principal(request: Request, authorization: str | None = Header(def
     return p
 
 
+async def customer_principal(request: Request, authorization: str | None = Header(default=None)) -> Principal:
+    """The customer side of a job, in the web app OR the paired native app: talk to the
+    print operator, review the edited document, set privacy. Access is still per job
+    (job_for: the owner or the app that claimed it)."""
+    p = resolve_principal(request, authorization)
+    if p.kind not in ("web", "native", "shop", "jury"):
+        raise api_error(403, "UNAUTHORIZED", "Customer access only.")
+    return p
+
+
 async def native_principal(request: Request, authorization: str | None = Header(default=None)) -> Principal:
     p = resolve_principal(request, authorization)
     if p.kind != "native":

@@ -22,6 +22,7 @@ from .auth import (
     issue_session,
     job_for,
     redeem_event_ticket,
+    customer_principal,
     web_customer_reference,
     web_principal,
 )
@@ -190,7 +191,7 @@ class MessageIn(BaseModel):
 
 
 @router.post("/jobs/{job_id}/messages")
-async def post_message(job_id: str, body: MessageIn, principal: Principal = Depends(web_principal)) -> dict[str, Any]:
+async def post_message(job_id: str, body: MessageIn, principal: Principal = Depends(customer_principal)) -> dict[str, Any]:
     store = get_store()
     job = job_for(principal, job_id)
     if job.status not in ("created", "awaiting_payment"):
@@ -242,7 +243,7 @@ async def get_document(job_id: str, ticket: str, version: str = "current") -> Fi
 # ───────────── edited-document review (original stays intact) ─────────────
 
 @router.post("/jobs/{job_id}/document/approve")
-async def approve_edited_document(job_id: str, principal: Principal = Depends(web_principal)) -> dict[str, Any]:
+async def approve_edited_document(job_id: str, principal: Principal = Depends(customer_principal)) -> dict[str, Any]:
     store = get_store()
     job = job_for(principal, job_id)
     doc = job.document
@@ -259,7 +260,7 @@ async def approve_edited_document(job_id: str, principal: Principal = Depends(we
 
 
 @router.post("/jobs/{job_id}/document/reject")
-async def reject_edited_document(job_id: str, principal: Principal = Depends(web_principal)) -> dict[str, Any]:
+async def reject_edited_document(job_id: str, principal: Principal = Depends(customer_principal)) -> dict[str, Any]:
     store = get_store()
     job = job_for(principal, job_id)
     doc = job.document
@@ -284,7 +285,7 @@ class PrivacyIn(BaseModel):
 
 
 @router.put("/jobs/{job_id}/privacy")
-async def set_privacy(job_id: str, body: PrivacyIn, principal: Principal = Depends(web_principal)) -> dict[str, Any]:
+async def set_privacy(job_id: str, body: PrivacyIn, principal: Principal = Depends(customer_principal)) -> dict[str, Any]:
     if body.requestedTrustMode is not None and body.requestedTrustMode not in TRUST_MODES:
         raise api_error(400, "POLICY_VIOLATION", "requestedTrustMode must be standard, verified, private or null.")
     store = get_store()
