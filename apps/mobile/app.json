@@ -1,7 +1,8 @@
-﻿{
+{
   "expo": {
     "name": "Inklink",
     "slug": "inklink",
+    "owner": "omicron8",
     "version": "0.1.0",
     "orientation": "portrait",
     "scheme": "inklink",
@@ -50,6 +51,11 @@
     },
     "web": {
       "favicon": "./assets/favicon.png"
+    },
+    "extra": {
+      "eas": {
+        "projectId": "ff079cb8-c62b-4300-9117-00de3c75b636"
+      }
     }
   }
 }
