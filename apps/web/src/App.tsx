@@ -1,6 +1,6 @@
 import { Navigate, Route, Routes } from 'react-router-dom';
 import { ShopList } from './customer/ShopList';
-import { Chat } from './customer/Chat';
+import { PrintSession } from './customer/PrintSession';
 import { JobsPage } from './customer/JobsPage';
 import { Workspace } from './workspace/Workspace';
 import { ShopAgentPage } from './shop/ShopAgentPage';
@@ -24,7 +24,8 @@ export function App() {
     <Routes>
       {/* Customer (anonymous session; no login, no wallet) */}
       <Route path="/app" element={<ShopList />} />
-      <Route path="/app/chat/:shopId" element={<Chat />} />
+      {/* The path keeps its name for existing links; the page is a document-first print session. */}
+      <Route path="/app/chat/:shopId" element={<PrintSession />} />
       <Route path="/app/jobs" element={<JobsPage />} />
       <Route path="/app/jobs/:jobId/agent" element={<Workspace auth="web" />} />
 
