@@ -14,7 +14,7 @@ import { Session } from '../customer/PrintSession';
 import { PaymentHandoffCard } from '../customer/PaymentHandoffCard';
 import { OrdersTable, DevicesCard } from '../shop/ShopPages';
 import { Workspace } from '../workspace/Workspace';
-import { summarize } from '../workspace/Panels';
+import { summarize, verificationLabel } from '../workspace/Panels';
 import { ModeBadge, useJury } from './JuryLayout';
 
 function Page({ stage, title, intro, children, next }: { stage: number; title: string; intro: ReactNode; children: ReactNode; next?: { to: string; label: string } }) {
@@ -227,7 +227,7 @@ function useProcessingSteps(job: JobView | null) {
     { label: '0G inference requested', state: fallback ? 'skipped' : (job?.privacy.inferenceCalls ?? 0) > 0 ? (job?.privacy.lastInference?.ok ? 'done' : 'failed') : sel?.error ? 'failed' : 'pending',
       mode: fallback ? 'simulated' : sel?.error ? 'unavailable' : 'live',
       detail: fallback ? 'Not used: SIMULATED rule-based planning.' : sel?.error ? sel.error.message
-        : job?.privacy.lastInference ? `${job.privacy.inferenceCalls} call(s) · last ${job.privacy.lastInference.ok ? 'ok' : job.privacy.lastInference.errorCode}${job.privacy.lastInference.teeVerified ? ' · TEE verified' : ''}` : 'Not requested yet.' },
+        : job?.privacy.lastInference ? `${job.privacy.inferenceCalls} call(s) · last ${job.privacy.lastInference.ok ? 'ok' : job.privacy.lastInference.errorCode} · ${verificationLabel(job.privacy.lastInference)}` : 'Not requested yet.' },
     { label: 'Strands agent processing', state: running ? 'active' : startedEv ? (finishedMsg?.outcome === 'failed' ? 'failed' : 'done') : finishedMsg?.outcome === 'unavailable' ? 'failed' : 'pending',
       mode: fallback ? 'simulated' : 'live',
       detail: fallback ? 'Deterministic demo operator calling the real tools.' : startedEv?.type === 'agent_started' ? `${startedEv.payload.provider} · ${startedEv.payload.model}` : finishedMsg?.message ?? 'Starts when the customer submits instructions.' },

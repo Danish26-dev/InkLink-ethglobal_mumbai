@@ -10,6 +10,13 @@ const PROVIDER_LABEL: Record<string, string> = {
 };
 const MODE_LABEL: Record<string, string> = { standard: 'Standard', verified: 'Verified', private: 'Private' };
 
+/** Honest wording: a provider attestation is not a per-response signature check. */
+export function verificationLabel(last: { verification?: string; teeVerified?: boolean | null; teeType?: string | null }): string {
+  if (last.verification === 'tee_signature_verified' || last.teeVerified === true) return 'TEE signature verified';
+  if (last.verification === 'provider_attested') return `attested ${last.teeType ?? 'TEE'} provider`;
+  return 'no attestation (standard)';
+}
+
 /* ───────────── left: agent identity, task, reasoning summary ───────────── */
 
 export function AgentPanel({ state, job, agentAvailable, agentReason }: {
@@ -49,10 +56,10 @@ export function AgentPanel({ state, job, agentAvailable, agentReason }: {
           </div>
           {last && (
             <div className="flex items-center gap-2">
-              <ShieldCheck className={`h-3.5 w-3.5 ${last.teeVerified ? 'text-emerald-600' : 'text-graphite'}`} aria-hidden="true" />
+              <ShieldCheck className={`h-3.5 w-3.5 ${last.verification && last.verification !== 'none' ? 'text-emerald-600' : 'text-graphite'}`} aria-hidden="true" />
               <dt className="text-graphite">Last call</dt>
               <dd className={`ml-auto text-right ${last.ok ? '' : 'text-signal'}`}>
-                {!last.ok ? last.errorCode : last.teeVerified ? 'TEE verified' : 'no attestation (standard)'}
+                {!last.ok ? last.errorCode : verificationLabel(last)}
               </dd>
             </div>
           )}

@@ -119,8 +119,17 @@ export interface JobPrivacy {
     ok: boolean;
     provider?: string | null;
     requestId?: string | null;
-    /** From 0G `x_0g_trace.tee_verified`; null = not requested (standard). */
+    /** From 0G `x_0g_trace.tee_verified`; null = not reported by the router. */
     teeVerified?: boolean | null;
+    /**
+     * tee_signature_verified: the router verified this response's TEE signature.
+     * provider_attested: the serving provider is published by 0G as TEE-attested at this tier
+     *   (the router did not report a per-response signature result).
+     * none: standard tier, no attestation.
+     */
+    verification?: "tee_signature_verified" | "provider_attested" | "none";
+    teeType?: string | null;
+    teeVerifier?: string | null;
     errorCode?: string;
   } | null;
 }
