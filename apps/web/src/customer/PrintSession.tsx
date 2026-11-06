@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { ArrowRight, Check, Circle, Loader2, Lock, MonitorPlay, Plus, Sparkles, TriangleAlert } from 'lucide-react';
-import type { ConversationMessage, JobView, PaymentHandoff, Quote, ShopChannel, TrustMode } from '@inklink/shared-schemas';
+import type { ConversationMessage, JobView, OperatorEvent, PaymentHandoff, Quote, ShopChannel, TrustMode } from '@inklink/shared-schemas';
 import { api, ApiError, errorMessage } from '../lib/api';
 import { foldEvents, PHASE_LABEL, TOOL_LABEL, type OperatorState } from '../lib/operatorState';
 import { currentJobFor, rememberJob, savedHandoff, saveHandoff, setCurrentJob } from '../lib/recent';
@@ -11,7 +11,14 @@ import { CustomerShell } from './CustomerShell';
 import { DocumentStage } from './DocumentStage';
 import { PaymentHandoffCard } from './PaymentHandoffCard';
 
-const REFRESH_ON = new Set(['agent_finished', 'job_status_updated', 'approval_required', 'document_processed', 'payment_status_updated', 'execution_authorized']);
+const REFRESH_ON = new Set(['agent_finished', 'job_status_updated', 'approval_required', 'document_processed', 'payment_status_updated',
+  'execution_authorized', 'configuration_updated', 'printer_readiness_updated']);
+
+/** True if any event after `afterSeq` changes backend job state the page shows. */
+function needsRefresh(events: OperatorEvent[], afterSeq: number): boolean {
+  return events.some((e) => e.seq > afterSeq && (REFRESH_ON.has(e.type)
+    || (e.type === 'tool_succeeded' && (e.payload as { tool?: string }).tool === 'validate_print_config')));
+}
 const LOCKED = new Set(['awaiting_execution', 'executing', 'completed', 'cancelled', 'failed']);
 
 /**
@@ -104,7 +111,7 @@ export interface SessionEmbed {
 }
 
 export function Session({ jobId, shop, onNew, embed }: { jobId: string; shop: ShopChannel | null; onNew: () => void; embed?: SessionEmbed }) {
-  const { events } = useJobEvents(jobId, 'web');
+  const { events, state: stream } = useJobEvents(jobId, 'web');
   const live = useMemo(() => foldEvents(events), [events]);
   const [job, setJob] = useState<JobView | null>(null);
   const [messages, setMessages] = useState<ConversationMessage[]>([]);
@@ -122,10 +129,21 @@ export function Session({ jobId, shop, onNew, embed }: { jobId: string; shop: Sh
     }
   }, [jobId]);
 
-  const lastRaw = events[events.length - 1];
+  // The job view always comes from the backend. Refetch (debounced) when ANY new event
+  // changes it — events arrive in bursts after a reconnect — and whenever the stream
+  // comes back, because changes may have happened while it was down.
+  const handledSeq = useRef<number | null>(null);
+  const lastSeq = events.length ? events[events.length - 1].seq : 0;
   useEffect(() => {
-    if (!lastRaw || REFRESH_ON.has(lastRaw.type)) void refresh();
-  }, [refresh, lastRaw?.seq]); // eslint-disable-line react-hooks/exhaustive-deps
+    const prev = handledSeq.current;
+    handledSeq.current = lastSeq;
+    if (prev !== null && !needsRefresh(events, prev)) return; // first run always loads
+    const t = setTimeout(() => void refresh(), 150);
+    return () => clearTimeout(t);
+  }, [refresh, lastSeq]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (stream === 'live') void refresh();
+  }, [stream, refresh]);
 
   const act = async (kind: Busy, fn: () => Promise<unknown>) => {
     setBusy(kind);
@@ -358,6 +376,7 @@ function Settings({ job }: { job: JobView }) {
   const c = job.operatorConfig;
   if (!c.paperSize && !c.colorMode && !c.copies) return null;
   const rows: [string, string | null][] = [
+    ['Printer', c.printerId ?? 'Not connected'],
     ['Copies', c.copies ? String(c.copies) : null],
     ['Colour', c.colorMode ? COLOR_LABEL[c.colorMode] : null],
     ['Paper', c.paperSize ? PAPER_LABEL[c.paperSize] : null],
@@ -384,11 +403,15 @@ function Pricing({ job, running, locked, busy, handoff, onQuote, onApprove, appr
   approvableWithoutPayment?: boolean;
 }) {
   const reviewPending = job.document?.editStatus === 'pending_review';
+  const quoteExpired = job.quote ? new Date(job.quote.expiresAt).getTime() <= Date.now() : false;
+  // An expired price can be renewed (the backend allows it unless a payment is in flight).
+  const canRequote = quoteExpired && !running && !locked && job.configValidated && job.status === 'awaiting_payment'
+    && job.paymentStatus !== 'processing';
   if (!job.quote) {
     if (!job.configValidated || running || locked) return null;
     return (
       <Card title="Price">
-        <p className="text-sm text-graphite">Your settings are checked. Get the price based on the real page count.</p>
+        <p className="text-sm text-graphite">Your document and settings are ready. Get the price based on the real page count.</p>
         <button type="button" className="btn-primary mt-3 w-full" onClick={onQuote} disabled={busy !== null || reviewPending}>
           {busy === 'quote' && <Loader2 className="h-4 w-4 animate-spin" />}{reviewPending ? 'Review the edited copy first' : 'Get price'}
         </button>
@@ -397,18 +420,66 @@ function Pricing({ job, running, locked, busy, handoff, onQuote, onApprove, appr
   }
   return (
     <>
-      <QuoteCard quote={job.quote} job={job} busy={busy === 'approve'} onApprove={onApprove} hasHandoff={Boolean(handoff)} demo={approvableWithoutPayment} />
-      {handoff && job.status === 'awaiting_payment' && <PaymentHandoffCard handoff={handoff} />}
+      <QuoteCard quote={job.quote} job={job} busy={busy === 'approve'} onApprove={onApprove} hasHandoff={Boolean(handoff)} demo={approvableWithoutPayment}
+        reviewPending={reviewPending} />
+      {canRequote && (
+        <button type="button" className="btn-primary w-full" onClick={onQuote} disabled={busy !== null}>
+          {busy === 'quote' && <Loader2 className="h-4 w-4 animate-spin" />}Get a new price
+        </button>
+      )}
+      {handoff && job.status === 'awaiting_payment' && !job.payment && <PaymentHandoffCard handoff={handoff} />}
+      {(job.payment || job.customerApprovedQuote) && !job.demo && <PaymentStatusCard job={job} />}
     </>
   );
 }
 
-function QuoteCard({ quote, job, busy, onApprove, hasHandoff, demo }: {
-  quote: Quote; job: JobView; busy: boolean; onApprove: () => void; hasHandoff: boolean; demo?: boolean;
+const PAYMENT_STATE: Record<string, { label: string; tone: 'wait' | 'ok' | 'bad' }> = {
+  none: { label: 'Waiting for payment in the Inklink app', tone: 'wait' },
+  pending: { label: 'Verifying payment on Hedera', tone: 'wait' },
+  verified: { label: 'Payment verified', tone: 'ok' },
+  unverified: { label: 'Settlement reported, not verified', tone: 'bad' },
+  failed: { label: 'Payment failed', tone: 'bad' },
+  expired: { label: 'Payment expired', tone: 'bad' },
+};
+
+/** Payment exactly as the backend recorded it; nothing here is inferred in the browser. */
+function PaymentStatusCard({ job }: { job: JobView }) {
+  const p = job.payment;
+  const state = PAYMENT_STATE[p?.verificationStatus ?? 'none'];
+  const color = state.tone === 'ok' ? 'text-emerald-700' : state.tone === 'bad' ? 'text-signal' : 'text-graphite';
+  const amount = p?.amount ?? job.quote?.settlement?.amount ?? null;
+  return (
+    <Card title="Payment" accent={state.tone === 'bad'}>
+      <p className={`flex items-center gap-1.5 text-sm font-medium ${color}`} role="status">
+        {state.tone === 'ok' ? <Check className="h-4 w-4" aria-hidden="true" /> : state.tone === 'bad'
+          ? <TriangleAlert className="h-4 w-4" aria-hidden="true" /> : <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />}
+        {state.label}
+      </p>
+      <dl className="mt-3 grid grid-cols-[110px_1fr] gap-y-1 text-xs">
+        <dt className="text-graphite">Amount</dt><dd>{amount ? `${amount} USDC` : '—'}{job.quote ? ` · ₹${job.quote.amount}` : ''}</dd>
+        <dt className="text-graphite">Method</dt><dd>Hedera x402 (HTS-USDC)</dd>
+        <dt className="text-graphite">Network</dt><dd>Hedera Testnet</dd>
+        <dt className="text-graphite">Status</dt><dd className="font-mono">{p?.status ?? job.paymentStatus}</dd>
+        <dt className="text-graphite">Transaction</dt>
+        <dd className="break-all font-mono">{p?.transactionId && p.hashscanUrl
+          ? <a href={p.hashscanUrl} target="_blank" rel="noreferrer" className="text-signal underline">{p.transactionId}</a>
+          : 'Not settled yet'}</dd>
+        {p?.verifiedAt && (<><dt className="text-graphite">Verified</dt><dd>{new Date(p.verifiedAt).toLocaleString()}</dd></>)}
+      </dl>
+      {(p?.verificationStatus === 'failed' || p?.verificationStatus === 'expired') && (
+        <p className="mt-3 text-xs text-graphite">No money was taken by Inklink for this attempt. Approve the price again to retry, or get a new price if it expired.</p>
+      )}
+    </Card>
+  );
+}
+
+function QuoteCard({ quote, job, busy, onApprove, hasHandoff, demo, reviewPending }: {
+  quote: Quote; job: JobView; busy: boolean; onApprove: () => void; hasHandoff: boolean; demo?: boolean; reviewPending?: boolean;
 }) {
   // In the jury demo the quote can be approved without a payment method; payment then follows the labelled simulated path.
   const payable = quote.paymentMethods.includes('hedera_x402') || Boolean(demo);
   const expired = new Date(quote.expiresAt).getTime() <= Date.now();
+  const retry = job.paymentStatus === 'failed' || job.paymentStatus === 'expired';
   return (
     <section className="rounded-2xl bg-ink p-5 text-paper">
       <p className="font-mono text-[11px] uppercase tracking-[0.14em] text-paper/60">Quotation</p>
@@ -418,7 +489,15 @@ function QuoteCard({ quote, job, busy, onApprove, hasHandoff, demo }: {
       {!payable ? (
         <p className="mt-4 rounded-lg bg-white/10 p-3 text-xs">This shop has not set up payments yet, so the job cannot be paid right now.</p>
       ) : expired ? (
-        <p className="mt-4 text-xs text-signal">This price expired. Send new requirements or get a new price.</p>
+        <p className="mt-4 text-xs text-signal">This price expired. Get a new price to continue.</p>
+      ) : reviewPending ? (
+        <p className="mt-4 text-xs text-paper/80">Review the edited copy before approving the price.</p>
+      ) : retry && job.status === 'awaiting_payment' ? (
+        <button type="button" className="btn-signal mt-4 w-full" onClick={onApprove} disabled={busy}>
+          {busy && <Loader2 className="h-4 w-4 animate-spin" />}Retry payment in the Inklink app
+        </button>
+      ) : job.payment ? (
+        <p className="mt-4 flex items-center gap-1.5 text-xs text-emerald-300"><Check className="h-3.5 w-3.5" aria-hidden="true" />Approved · payment started in the Inklink app</p>
       ) : job.customerApprovedQuote && hasHandoff ? (
         <p className="mt-4 flex items-center gap-1.5 text-xs text-emerald-300"><Check className="h-3.5 w-3.5" aria-hidden="true" />Approved · continue in the Inklink app</p>
       ) : job.customerApprovedQuote ? (

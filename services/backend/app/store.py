@@ -352,6 +352,8 @@ class Store:
             "acceptingOrders": True,
             # Shop-wide floor for 0G trust mode; null = follow the document policy.
             "minimumTrustMode": None,
+            # Printer chosen by the shopkeeper from the adapter's discovered printers; null = adapter default.
+            "defaultPrinterId": None,
             "defaults": {
                 "paperSize": "A4",
                 "colorMode": "monochrome",

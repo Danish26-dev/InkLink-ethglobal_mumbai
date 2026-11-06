@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from . import zerog
@@ -43,6 +44,7 @@ def job_view(job: JobRecord) -> dict[str, Any]:
         "configValidated": job.config_validated,
         "quote": quote_contract(quote) if quote else None,
         "customerApprovedQuote": job.customer_approved_quote,
+        "payment": payment_view(job),
         "shopApproved": job.shop_approved,
         "executionRequested": job.execution_requested,
         "runActive": job.run_active,
@@ -53,6 +55,43 @@ def job_view(job: JobRecord) -> dict[str, Any]:
         "deviceEvents": job.device_events[-10:],
         "createdAt": job.created_at,
         "updatedAt": job.updated_at,
+    }
+
+
+_HEDERA_TX_ID = re.compile(r"^\d+\.\d+\.\d+@\d+\.\d+$")
+
+
+def verification_status(rec) -> str:
+    """Backend view of a payment. `verified` requires what only the HMAC-verified settlement
+    callback writes (status settled + a Hedera tx id + the backend's verification time); the
+    payment agent sends that callback only after its mirror-node check."""
+    if rec is None:
+        return "not_started"
+    if rec.status == "settled":
+        ok = bool(rec.transaction_id and _HEDERA_TX_ID.match(rec.transaction_id) and rec.verified_at)
+        return "verified" if ok else "unverified"
+    return {"processing": "pending", "failed": "failed", "expired": "expired"}.get(rec.status, "pending")
+
+
+def payment_view(job: JobRecord) -> dict[str, Any] | None:
+    """The job's current payment from backend records (null before a payment starts).
+    Transaction fields are present only once verified."""
+    rec = get_store().payments.get(job.payment_id) if job.payment_id else None
+    if rec is None:
+        return None
+    v = verification_status(rec)
+    verified = v == "verified"
+    return {
+        "paymentId": rec.payment_id,
+        "status": rec.status,
+        "verificationStatus": v,
+        "amount": rec.amount_usdc,
+        "asset": "HTS_USDC",
+        "network": "hedera:testnet",
+        "transactionId": rec.transaction_id if verified else None,
+        "hashscanUrl": rec.hashscan_url if verified else None,
+        "settledAt": rec.settled_at if verified else None,
+        "verifiedAt": rec.verified_at if verified else None,
     }
 
 

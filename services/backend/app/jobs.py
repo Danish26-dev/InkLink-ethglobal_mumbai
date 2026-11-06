@@ -269,6 +269,15 @@ async def run_operator(job_id: str, instruction: str, mode: str = "ai") -> None:
             src = working_document_path(job.document)
             if src and src.exists():
                 doc_tuple = (job.document.filename, src.read_bytes())
+        if not store.is_demo_shop(job.shop_id):
+            printer_problem = await seed_printer(job)
+            if printer_problem:
+                # Editing still works; the customer learns now why printing cannot be configured.
+                with store.lock:
+                    add_message(job, "system", printer_problem)
+                    store.save()
+                publish(job.job_id, "printer_readiness_updated",
+                        {"printerId": None, "status": "unknown", "available": False})
         defaults = store.shop_config(job.shop_id).get("defaults", {})
         finished = False
         async for event in stream_operator_run(
@@ -327,6 +336,9 @@ def create_quote(job: JobRecord) -> QuoteRecord:
     store = get_store()
     if not job.document:
         raise QuoteError("UPLOAD_FAILED", "Upload a document before requesting a quote.")
+    if job.payment_status in ("processing", "settled"):
+        # A payment for the current quote is in flight or done: re-pricing now could orphan it.
+        raise QuoteError("POLICY_VIOLATION", "A payment for this job is already in progress or settled.", 409)
     if not job.config_validated and is_native_job(job):
         # Native-only flow: price exactly what the customer chose in the app.
         with store.lock:
@@ -376,6 +388,10 @@ def create_quote(job: JobRecord) -> QuoteRecord:
         job.quote_id = quote.quote_id
         job.customer_approved_quote = False
         job.status = "awaiting_payment"
+        if job.payment_status in ("failed", "expired"):
+            # A new quote starts a fresh payment attempt; the failed record stays in store.payments.
+            job.payment_status = "created"
+            job.payment_id = None
         store.touch(job)
         store.save()
     publish(job.job_id, "approval_required", {"kind": "customer_quote", "reason": f"Quote {inr} INR is ready for approval."})
@@ -422,13 +438,46 @@ def pending_gates(job: JobRecord) -> list[str]:
     return pending
 
 
-def default_online_printer(discovery: dict[str, Any]) -> str | None:
-    """The default printer if it is online, else the first online one (adapter /printers body)."""
+def default_online_printer(discovery: dict[str, Any], preferred: str | None = None) -> str | None:
+    """A real, currently online printer from discovery (adapter /printers body), never invented.
+
+    Order: the shop's chosen printer (`preferred`, shop config defaultPrinterId) if it is online,
+    else the adapter's default printer if online, else the first online printer."""
     printers = [p for p in discovery.get("printers") or [] if isinstance(p, dict) and p.get("id")]
     online = [p for p in printers if p.get("status") == "online"]
+    if preferred:
+        hit = next((p for p in online if str(p.get("id")) == preferred), None)
+        if hit:
+            return str(hit["id"])
     default = discovery.get("defaultPrinter")
     chosen = next((p for p in online if p.get("isDefault") or p.get("id") == default), None) or next(iter(online), None)
     return str(chosen["id"]) if chosen else None
+
+
+PRINTER_HELP = ("Printing needs the shop's printer: the shopkeeper starts the Inklink shop gateway and printer "
+                "adapter on the shop computer, then picks a printer in Shop configuration.")
+
+
+async def seed_printer(job: JobRecord) -> str | None:
+    """Give the operator a real printer to work with when none is chosen yet.
+
+    Returns a customer-safe explanation when no printer can be used (gateway offline or no
+    online printer); the configuration is left without a printer in that case."""
+    if job.operator_config.get("printerId"):
+        return None
+    store = get_store()
+    preferred = store.shop_config(job.shop_id).get("defaultPrinterId")
+    try:
+        printer_id = default_online_printer(await list_printers(), preferred)
+    except ServiceError as exc:
+        return f"{exc.message} {PRINTER_HELP}"
+    if not printer_id:
+        return f"No printer at the shop is online right now. {PRINTER_HELP}"
+    with store.lock:
+        job.operator_config = {**job.operator_config, "printerId": printer_id}
+        store.touch(job)
+        store.save()
+    return None
 
 
 async def try_execute(job_id: str) -> dict[str, Any]:
@@ -458,7 +507,7 @@ async def try_execute(job_id: str) -> dict[str, Any]:
         # Native-only jobs never named a printer: use the shop's default online printer, the
         # same choice the print operator makes. Never invent one.
         try:
-            printer_id = default_online_printer(await list_printers())
+            printer_id = default_online_printer(await list_printers(), store.shop_config(job.shop_id).get("defaultPrinterId"))
         except ServiceError as exc:
             return {"state": "blocked", "pending": ["printer"], "message": exc.message}
         if not printer_id:

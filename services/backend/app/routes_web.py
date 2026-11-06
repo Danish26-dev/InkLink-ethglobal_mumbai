@@ -203,16 +203,21 @@ async def post_message(job_id: str, body: MessageIn, principal: Principal = Depe
         raise api_error(409, "POLICY_VIOLATION", "This job is already paid or printing; it can no longer be changed.")
     if job.run_active:
         raise api_error(409, "POLICY_VIOLATION", "The print operator is still working on your last message.")
+    if job.payment_status in ("processing", "settled"):
+        raise api_error(409, "POLICY_VIOLATION", "A payment for this job is in progress; it can no longer be changed.")
     text = body.text.strip()
     with store.lock:
         msg = add_message(job, "customer", text)
         # A new instruction may change the configuration; any earlier quote is no longer valid.
+        cleared = bool(job.quote_id)
         if job.quote_id:
             job.quote_id = None
             job.customer_approved_quote = False
             job.status = "created"
         store.touch(job)
         store.save()
+    if cleared:
+        events.publish_job_status(job)  # every open view drops the stale price
     start_operator_run(job, text)
     return msg
 
@@ -326,6 +331,13 @@ async def approve_quote(job_id: str, principal: Principal = Depends(web_principa
         raise api_error(409, "JOB_NOT_FOUND", "Request a quote first.")
     if quote_expired(q):
         raise api_error(410, "QUOTE_EXPIRED", "The quote has expired; request a new quote.")
+    # Document approval and quote approval are separate steps; re-check state at approval time.
+    if job.status != "awaiting_payment":
+        raise api_error(409, "POLICY_VIOLATION", "This job is not waiting for payment.")
+    if job.document and job.document.edit_status == "pending_review":
+        raise api_error(409, "POLICY_VIOLATION", "Review the edited document before approving the price.")
+    if job.payment_status in ("processing", "settled"):
+        raise api_error(409, "POLICY_VIOLATION", "A payment for this job is already in progress or settled.")
     if "hedera_x402" not in q.payment_methods:
         raise api_error(
             409,

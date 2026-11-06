@@ -80,6 +80,8 @@ export interface JobView {
   configValidated: boolean;
   quote: Quote | null;
   customerApprovedQuote: boolean;
+  /** The job's current payment, from backend records. Null before a payment starts. */
+  payment: JobPayment | null;
   shopApproved: boolean;
   /** The operator called request_print_execution for the current configuration. */
   executionRequested: boolean;
@@ -98,6 +100,25 @@ export interface JobView {
   deviceEvents: { at: IsoTimestamp; deviceId: string; type: string; detail: string | null }[];
   createdAt: IsoTimestamp;
   updatedAt: IsoTimestamp;
+}
+
+/**
+ * Hedera x402 payment of a job, as recorded by the backend.
+ * `verificationStatus` is "verified" only after the backend accepted the HMAC-signed settlement
+ * callback that the payment agent sends after its mirror-node check; transaction fields are
+ * null until then.
+ */
+export interface JobPayment {
+  paymentId: string;
+  status: PaymentStatus;
+  verificationStatus: "pending" | "verified" | "unverified" | "failed" | "expired";
+  amount: string;
+  asset: "HTS_USDC";
+  network: "hedera:testnet";
+  transactionId: string | null;
+  hashscanUrl: string | null;
+  settledAt: IsoTimestamp | null;
+  verifiedAt: IsoTimestamp | null;
 }
 
 /** 0G trust-mode decision and call metadata for a job. Never includes keys, prompts or completions. */
@@ -191,6 +212,8 @@ export interface ShopConfig {
   pricePerPageColor: string;
   /** Shop-wide floor for 0G inference; can only make runs stricter. */
   minimumTrustMode?: TrustMode | null;
+  /** Printer for new jobs, chosen from the adapter's discovered printers; null = adapter default. */
+  defaultPrinterId?: string | null;
 }
 
 /** Which 0G trust modes have a key configured on the backend (never the keys). */
@@ -225,7 +248,11 @@ export interface ShopPayments {
 /* GET /api/v1/shop/hardware */
 export interface ShopHardware {
   gateway?: { gatewayId: string; fingerprint: string; status: string };
-  printerAdapter: { reachable: boolean; printers: PrinterSummary[]; defaultPrinter: string | null; error: string | null; url: string };
+  printerAdapter: {
+    reachable: boolean; printers: PrinterSummary[]; defaultPrinter: string | null; error: string | null; url: string;
+    /** Cloud backend: the shop gateway relay. `connected` only after a real authenticated poll. */
+    relay?: { mode: string; configured?: boolean; connected?: boolean; lastPollAt?: number | null };
+  };
   /** ESP32-S3 controllers / gateways, only as they actually reported. */
   devices?: {
     configured: boolean;

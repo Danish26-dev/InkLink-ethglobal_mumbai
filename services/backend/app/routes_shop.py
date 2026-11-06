@@ -136,12 +136,16 @@ class ShopConfigIn(BaseModel):
     pricePerPageColor: str
     # Shop-wide floor for 0G inference; it can only make runs stricter.
     minimumTrustMode: str | None = None
+    # The shop's printer for new jobs: must be a printer the adapter actually discovered.
+    # Omitted = keep the current choice; null = clear it (fall back to the adapter's default).
+    defaultPrinterId: str | None = Field(None, max_length=256)
 
 
 @router.get("/config")
 async def get_config(request: Request, principal: Principal = Depends(shop_principal)) -> dict[str, Any]:
     cfg = get_store().shop_config(active_shop(principal, request))
-    return {k: cfg.get(k) for k in ("shopId", "name", "description", "pricePerPageMonochrome", "pricePerPageColor", "minimumTrustMode", "defaults", "demo")}
+    return {k: cfg.get(k) for k in ("shopId", "name", "description", "pricePerPageMonochrome", "pricePerPageColor",
+                                    "minimumTrustMode", "defaultPrinterId", "defaults", "demo")}
 
 
 @router.put("/config")
@@ -150,10 +154,19 @@ async def put_config(body: ShopConfigIn, request: Request, principal: Principal 
         raise api_error(400, "POLICY_VIOLATION", "Prices must be decimal strings like 2.00.")
     if body.minimumTrustMode is not None and body.minimumTrustMode not in TRUST_MODES:
         raise api_error(400, "POLICY_VIOLATION", "minimumTrustMode must be standard, verified, private or null.")
+    update = body.model_dump(exclude_unset=True)
+    if update.get("defaultPrinterId"):
+        # Only a printer the adapter really reports; never a typed-in or invented id.
+        found = await _printers()
+        if not found["reachable"]:
+            raise api_error(503, "PRINTER_ADAPTER_UNREACHABLE",
+                            f"{found['error']} Start the shop gateway and printer adapter, then choose the printer again.")
+        if update["defaultPrinterId"] not in {str(p.get("id")) for p in found["printers"]}:
+            raise api_error(400, "POLICY_VIOLATION", "That printer was not found by the printer adapter. Discover printers and pick one from the list.")
     store = get_store()
     shop_id = active_shop(principal, request)
     with store.lock:
-        store.shops.setdefault(shop_id, {}).update(body.model_dump())
+        store.shops.setdefault(shop_id, {}).update(update)
         store.save()
     return await get_config(request, principal)
 

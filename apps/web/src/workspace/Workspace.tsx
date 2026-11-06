@@ -13,7 +13,8 @@ import { PrinterDialog } from './PrinterDialog';
 import { AgentPanel, ConfigPanel, EventStream } from './Panels';
 import { useVisual } from './visual';
 
-const REFRESH_ON = new Set(['job_status_updated', 'approval_required', 'document_processed', 'agent_finished', 'payment_status_updated', 'execution_authorized']);
+const REFRESH_ON = new Set(['job_status_updated', 'approval_required', 'document_processed', 'agent_finished', 'payment_status_updated',
+  'execution_authorized', 'configuration_updated', 'printer_readiness_updated']);
 
 /**
  * Agent Workspace: watch the print operator configure the real printer.
@@ -36,12 +37,21 @@ export function Workspace({ auth, jobId: forcedJobId, headerExtra, backHref }: {
   const [agent, setAgent] = useState<{ available: boolean | null; reason: string | null }>({ available: null, reason: null });
 
   // Job snapshot (document info, approvals) — refreshed when the stream reports a change.
-  const lastRaw = events[events.length - 1];
+  // Check every event since the last refresh (bursts after a reconnect), not only the last one,
+  // and reload when the stream comes back.
+  const handledSeq = useRef<number | null>(null);
+  const lastSeq = events.length ? events[events.length - 1].seq : 0;
   useEffect(() => {
     if (!jobId) return;
-    if (lastRaw && !REFRESH_ON.has(lastRaw.type)) return;
-    api.job(jobId, auth).then(setJob, (e) => setError(errorMessage(e)));
-  }, [jobId, auth, lastRaw?.seq]); // eslint-disable-line react-hooks/exhaustive-deps
+    const prev = handledSeq.current;
+    handledSeq.current = lastSeq;
+    if (prev !== null && !events.some((e) => e.seq > prev && REFRESH_ON.has(e.type))) return;
+    const t = setTimeout(() => api.job(jobId, auth).then(setJob, (e) => setError(errorMessage(e))), 150);
+    return () => clearTimeout(t);
+  }, [jobId, auth, lastSeq]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (jobId && stream === 'live') api.job(jobId, auth).then(setJob, () => undefined);
+  }, [jobId, auth, stream]);
 
   useEffect(() => {
     if (auth === 'shop') {

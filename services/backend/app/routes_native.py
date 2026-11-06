@@ -141,6 +141,8 @@ async def initiate_payment(body: PaymentIn, principal: Principal = Depends(nativ
         raise api_error(403, "POLICY_VIOLATION", "The customer has not approved this quote in the web app.")
     if quote_expired(q):
         raise api_error(410, "QUOTE_EXPIRED", "The quote has expired; request a new quote.")
+    if job.payment_status in ("processing", "settled"):
+        raise api_error(409, "POLICY_VIOLATION", "A payment for this job is already in progress or settled.")
     try:
         status, payload = await call_payment_agent("POST", "/api/v1/payments", {
             "jobId": job.job_id,

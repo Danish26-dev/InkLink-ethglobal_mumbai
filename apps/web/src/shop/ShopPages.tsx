@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState, type FormEvent } from 'react';
 import { Link } from 'react-router-dom';
 import QRCode from 'qrcode';
 import { Check, Circle, Loader2, MonitorPlay, RefreshCw } from 'lucide-react';
-import type { JobView, ShopConfig, ShopHardware, ShopPayments, TrustMode } from '@inklink/shared-schemas';
+import type { JobView, PrinterSummary, ShopConfig, ShopHardware, ShopPayments, TrustMode } from '@inklink/shared-schemas';
 import { api, errorMessage } from '../lib/api';
 import { COLOR_LABEL, PAPER_LABEL, SIDES_LABEL } from '../workspace/PrinterDialog';
 import { useShop } from './ShopLayout';
@@ -241,8 +241,13 @@ export function ShopHardwarePage() {
       setBusy(false);
     }
   }, []);
-  useEffect(() => void scan(), [scan]);
+  useEffect(() => {
+    void scan();
+    const t = setInterval(() => void scan(), 10_000); // gateway and printer status as the backend sees it
+    return () => clearInterval(t);
+  }, [scan]);
   const adapter = data?.printerAdapter;
+  const relay = adapter?.relay;
 
   return (
     <Page title="Hardware" subtitle="The local printer adapter on this computer, the printers it discovers, and jobs at the printer."
@@ -253,6 +258,22 @@ export function ShopHardwarePage() {
           <span className="font-medium">Printer adapter {adapter.reachable ? 'reachable' : 'not reachable'}</span>
           <span className="font-mono text-xs text-graphite">{adapter.url}</span>
           {!adapter.reachable && <span className="text-signal">{adapter.error}</span>}
+        </div>
+      )}
+      {relay?.mode === 'relay' && (
+        <div className="card mb-4 p-4 text-sm">
+          <div className="flex items-center gap-3">
+            <span className={`h-2.5 w-2.5 rounded-full ${relay.connected ? 'bg-emerald-500' : 'bg-signal'}`} />
+            <span className="font-medium">Shop gateway {relay.connected ? 'connected' : 'not connected'}</span>
+            {relay.lastPollAt && <span className="text-xs text-graphite">last contact {new Date(relay.lastPollAt * 1000).toLocaleTimeString()}</span>}
+          </div>
+          {!relay.connected && (
+            <p className="mt-2 text-xs text-graphite">
+              This backend runs in the cloud and reaches the printer only through the shop gateway on the shop computer. Start the printer adapter
+              and <code>services/shop-gateway</code> there (<code>npm start</code>) with this backend&apos;s URL and its GATEWAY_TOKEN. The status turns
+              connected after its first authenticated poll.
+            </p>
+          )}
         </div>
       )}
       {data && <DevicesCard data={data} />}
@@ -391,10 +412,16 @@ export function ShopSettingsPage() {
   const [cfg, setCfg] = useState<ShopConfig | null>(null);
   const [status, setStatus] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  useEffect(() => {
-    api.shop.config().then(({ name, description, pricePerPageMonochrome, pricePerPageColor, minimumTrustMode }) =>
-      setCfg({ name, description, pricePerPageMonochrome, pricePerPageColor, minimumTrustMode: minimumTrustMode ?? null }), (e) => setStatus(errorMessage(e)));
+  const [found, setFound] = useState<{ reachable: boolean; printers: PrinterSummary[]; error: string | null } | null>(null);
+  const discover = useCallback(() => {
+    api.shop.printers().then(setFound, (e) => setFound({ reachable: false, printers: [], error: errorMessage(e) }));
   }, []);
+  useEffect(() => {
+    api.shop.config().then(({ name, description, pricePerPageMonochrome, pricePerPageColor, minimumTrustMode, defaultPrinterId }) =>
+      setCfg({ name, description, pricePerPageMonochrome, pricePerPageColor, minimumTrustMode: minimumTrustMode ?? null,
+        defaultPrinterId: defaultPrinterId ?? null }), (e) => setStatus(errorMessage(e)));
+    discover();
+  }, [discover]);
   const save = async (e: FormEvent) => {
     e.preventDefault();
     if (!cfg) return;
@@ -437,6 +464,29 @@ export function ShopSettingsPage() {
             <option value="private">Always Private</option>
           </select>
           <p className="mt-1 text-xs text-graphite">This can only make inference stricter. Sensitive and unclassified documents always use Private.</p>
+        </div>
+        <div>
+          <div className="flex items-center gap-2">
+            <label htmlFor="cfg-printer" className="label-mono">Printer for new jobs</label>
+            <button type="button" className="ml-auto text-xs text-graphite underline" onClick={discover}>Discover printers</button>
+          </div>
+          {found && !found.reachable ? (
+            <p className="mt-1 rounded-md bg-signal/10 p-2 text-xs" role="alert">
+              {found.error ?? 'The printer adapter is not reachable.'} Start the printer adapter and the shop gateway on the shop computer, then discover again.
+            </p>
+          ) : found && found.printers.length === 0 ? (
+            <p className="mt-1 text-xs text-graphite">The printer adapter found no printers. Install or switch on a printer on the shop computer, then discover again.</p>
+          ) : (
+            <select id="cfg-printer" value={cfg.defaultPrinterId ?? ''} disabled={!found}
+              onChange={(e) => setCfg({ ...cfg, defaultPrinterId: e.target.value || null })}
+              className="mt-1 w-full rounded-md border border-light-grey bg-white px-3 py-2 text-sm focus:border-ink focus:outline-none">
+              <option value="">The adapter&apos;s default printer</option>
+              {found?.printers.map((p) => (
+                <option key={p.id} value={p.id}>{p.name} · {p.status}{p.isDefault ? ' · default' : ''}</option>
+              ))}
+            </select>
+          )}
+          <p className="mt-1 text-xs text-graphite">Only printers the adapter discovered can be chosen. If the chosen printer is offline, the first online printer is used.</p>
         </div>
         <div className="flex items-center gap-3">
           <button type="submit" className="btn-primary" disabled={busy}>{busy && <Loader2 className="h-4 w-4 animate-spin" />}Save</button>

@@ -92,20 +92,14 @@ class DeviceEventIn(BaseModel):
 # ───────────── GET /api/v1/devices/display: what a shop device may show ─────────────
 
 _CLOSED_JOB_STATES = ("completed", "cancelled", "failed")
-_HEDERA_TX_ID = re.compile(r"^\d+\.\d+\.\d+@\d+\.\d+$")
 DISPLAY_MAX_JOBS = 10
 
 
 def _verification_status(rec) -> str:
-    """Backend view only. `verified` requires the record the HMAC-verified settlement callback
-    wrote (status settled + a Hedera tx id + the backend's verification time); the agent sends
-    that callback only after its mirror-node check. Nothing a device sends can change this."""
-    if rec is None:
-        return "not_started"
-    if rec.status == "settled":
-        ok = bool(rec.transaction_id and _HEDERA_TX_ID.match(rec.transaction_id) and rec.verified_at)
-        return "verified" if ok else "unverified"
-    return {"processing": "pending", "failed": "failed", "expired": "expired"}.get(rec.status, "pending")
+    # Shared with the customer/shop job view; nothing a device sends can change it.
+    from .views import verification_status
+
+    return verification_status(rec)
 
 
 def _device_job(job) -> dict[str, Any]:
