@@ -71,8 +71,11 @@ Two independent paths, both outbound from the device's point of view:
    Read the token with `gcloud secrets versions access latest --secret=DEVICE_TOKEN --project=inklink-513817`.
    A job becomes `completed` only from a real `print_completed` for a job the backend submitted.
 2. **Status for the display (from the shop gateway)**: `GET http://<shop-computer>:7780/display`
-   returns `{gatewayId, backendConnected, lastPollAt, jobs:[{jobId, status, paymentStatus, deviceStatus, updatedAt}]}`
-   (the last 10 real jobs; status values only, never documents or prices). It binds to
+   returns `{gatewayId, backendConnected, lastPollAt, jobs:[{jobId, status, paymentStatus, deviceStatus, updatedAt, payment?}]}`
+   (the last 10 real jobs; never documents or customer data). `payment` =
+   `{transactionId, network, amount, settledAt, verifiedAt, hashscanUrl}` appears **only** after the
+   backend verified the signed settlement callback (`payment_status_updated` with `status: "settled"`).
+   The display never talks to the payment agent. It binds to
    `127.0.0.1` by default. To let the ESP32 read it over Wi-Fi, set `DISPLAY_HOST` to the shop
    computer's LAN address **and** `DISPLAY_TOKEN`; the device then sends `Authorization: Bearer <DISPLAY_TOKEN>`.
    Never port-forward it.

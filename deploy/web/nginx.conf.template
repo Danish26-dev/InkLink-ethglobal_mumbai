@@ -19,16 +19,20 @@ server {
 
     client_max_body_size 30m;
 
+    # SAMEORIGIN, not DENY: the PWA previews documents in an <iframe> of /api/v1/jobs/{id}/document
+    # on this same origin. Other sites still cannot frame Inklink.
     add_header X-Content-Type-Options nosniff always;
     add_header Referrer-Policy strict-origin-when-cross-origin always;
-    add_header X-Frame-Options DENY always;
+    add_header X-Frame-Options SAMEORIGIN always;
 
     gzip on;
     gzip_types text/css application/javascript application/json image/svg+xml application/manifest+json;
     gzip_min_length 1024;
 
-    # Liveness of this container only (does not call the backend).
-    location = /healthz {
+    # Liveness of this container only (does not call the backend). /healthz is used by the
+    # in-container HEALTHCHECK and Cloud Run probes, but Google's front end reserves public
+    # paths ending in "z" (it answers 404 itself), so /health is the public check.
+    location ~ ^/(healthz|health)$ {
         access_log off;
         default_type text/plain;
         return 200 "ok\n";
@@ -56,7 +60,7 @@ server {
         add_header Cache-Control "no-cache" always;
         add_header X-Content-Type-Options nosniff always;
         add_header Referrer-Policy strict-origin-when-cross-origin always;
-        add_header X-Frame-Options DENY always;
+        add_header X-Frame-Options SAMEORIGIN always;
     }
 
     location ~ ^/(portal|app|shop|jury|demo)(/.*)?$ {
@@ -64,7 +68,7 @@ server {
         add_header Cache-Control "no-cache" always;
         add_header X-Content-Type-Options nosniff always;
         add_header Referrer-Policy strict-origin-when-cross-origin always;
-        add_header X-Frame-Options DENY always;
+        add_header X-Frame-Options SAMEORIGIN always;
         try_files /pwa/index.html =404;
     }
 
@@ -77,7 +81,7 @@ server {
         add_header Cache-Control "public, max-age=31536000, immutable" always;
         add_header X-Content-Type-Options nosniff always;
         add_header Referrer-Policy strict-origin-when-cross-origin always;
-        add_header X-Frame-Options DENY always;
+        add_header X-Frame-Options SAMEORIGIN always;
         try_files $uri =404;
     }
 

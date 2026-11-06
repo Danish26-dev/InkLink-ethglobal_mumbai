@@ -55,6 +55,7 @@ grant_invoker "${SVC_ENGINE}" "serviceAccount:$(sa_email "${SA_AGENT}")"
 ok "${SA_AGENT} may invoke ${SVC_ENGINE}"
 
 # ── 3. Payments ─────────────────────────────────────────────────────────────
+deploy_payment_agent=1
 if (( DEPLOY_PAYMENTS )); then
   step "3/4 ${SVC_GATE} (public x402 paywall)"
   reset_service_vars
@@ -76,6 +77,22 @@ if (( DEPLOY_PAYMENTS )); then
   make_public "${SVC_GATE}"
 
   step "3/4 ${SVC_PAYMENT} (private, single instance: owns the spend-limit state)"
+  # A rollout briefly runs the old and the new revision side by side, and both would own
+  # the same spend-limit state file. So an existing payment agent is redeployed only on
+  # purpose: SKIP_PAYMENT_AGENT=1 always leaves it untouched, otherwise you are asked.
+  deploy_payment_agent=1
+  if service_exists "${SVC_PAYMENT}"; then
+    if [[ "${SKIP_PAYMENT_AGENT:-0}" == "1" ]]; then
+      deploy_payment_agent=0
+    elif [[ "${YES:-0}" != "1" ]]; then
+      confirm "Redeploy ${SVC_PAYMENT}? Only when no payment is in progress (n = keep the running one)" \
+        || deploy_payment_agent=0
+    fi
+  fi
+fi
+if (( DEPLOY_PAYMENTS )) && (( deploy_payment_agent == 0 )); then
+  warn "${SVC_PAYMENT} left as it is (running revision unchanged)"
+elif (( DEPLOY_PAYMENTS )); then
   reset_service_vars
   S_NAME="${SVC_PAYMENT}"; S_SA="${SA_PAYMENT}"; S_IMAGE="${REGISTRY}/payment-agent:${TAG}"
   S_PORT=4021; S_MIN=1; S_MAX=1; S_CPU_ALWAYS=true; S_MEMORY=512Mi; S_TIMEOUT=300
@@ -139,6 +156,8 @@ S_ENV=(
 [[ -n "${BOOTSTRAP_SHOPKEEPER_EMAIL:-}" ]] && S_ENV+=(
   "BOOTSTRAP_SHOPKEEPER_EMAIL=${BOOTSTRAP_SHOPKEEPER_EMAIL}"
   "BOOTSTRAP_SHOPKEEPER_NAME=${BOOTSTRAP_SHOPKEEPER_NAME:-Shop owner}"
+  # true = the BOOTSTRAP_SHOPKEEPER_PASSWORD secret is authoritative (resets the password).
+  "BOOTSTRAP_SHOPKEEPER_SYNC_PASSWORD=${BOOTSTRAP_SHOPKEEPER_SYNC_PASSWORD:-false}"
 )
 if (( DEPLOY_PAYMENTS )); then
   S_ENV+=("MERCHANT_ACCOUNT_ID=${MERCHANT_ACCOUNT_ID}" "INR_TO_USDC_RATE=${INR_TO_USDC_RATE:-}")

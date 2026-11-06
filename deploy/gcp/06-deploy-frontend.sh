@@ -16,7 +16,8 @@ ok "backend ${BACKEND_URL}"
 step "${SVC_WEB} (public)"
 reset_service_vars
 S_NAME="${SVC_WEB}"; S_SA="${SA_WEB}"; S_IMAGE="${REGISTRY}/web:${TAG}"
-S_PORT=8080; S_MIN=0; S_MAX=3; S_CPU=1; S_MEMORY=256Mi; S_CONCURRENCY=250
+# 512Mi is the minimum Cloud Run accepts for the gen2 execution environment.
+S_PORT=8080; S_MIN=0; S_MAX=3; S_CPU=1; S_MEMORY=512Mi; S_CONCURRENCY=250
 # Long timeout: /api/v1/jobs/{id}/events (SSE) streams through this service.
 S_TIMEOUT=3600; S_HEALTH=/healthz
 S_ENV=("BACKEND_URL=${BACKEND_URL}")

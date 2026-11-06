@@ -48,7 +48,7 @@ async def lifespan(_app: FastAPI):
     try:
         created = bootstrap_shopkeeper_from_env()
         if created:
-            log.info("Created the bootstrap shopkeeper account %s", created)
+            log.info("Bootstrap shopkeeper account %s created or password synced", created)
     except ValueError as exc:  # e.g. a password below the minimum length
         log.warning("Bootstrap shopkeeper not created: %s", exc)
     task = asyncio.create_task(retention_loop())

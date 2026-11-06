@@ -188,5 +188,8 @@ bash deploy/gcp/03-build-images.sh && bash deploy/gcp/04-deploy-services.sh && b
 bash deploy/gcp/07-verify-deployment.sh
 ```
 
-The backend keeps its state across deploys (bucket volume, flushed on shutdown). Roll back by
+The backend keeps its state across deploys (bucket volume, flushed on shutdown).
+Once payments are live, redeploy with `SKIP_PAYMENT_AGENT=1 bash deploy/gcp/04-deploy-services.sh`
+unless you mean to update the payment agent: a rollout briefly runs two revisions that share its
+spend-limit state, so only redeploy it when no payment is in progress (04 asks before doing so). Roll back by
 deploying an earlier tag: `TAG=<sha> bash deploy/gcp/04-deploy-services.sh`.

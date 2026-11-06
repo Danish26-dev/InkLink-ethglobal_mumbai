@@ -100,6 +100,26 @@ test('poll round: executes requests, posts results, keeps display status only', 
   assert.deepEqual(view.jobs, [{ jobId: 'job_1', status: 'executing', paymentStatus: 'settled', updatedAt: 't1' }]);
 });
 
+test('display: settlement proof appears only for a settled payment, job status untouched', () => {
+  const gw = createGateway(loadConfig(BASE), { log: quiet });
+  gw.applyEvents([
+    { jobId: 'job_2', type: 'job_status_updated', ts: 't1', payload: { status: 'awaiting_payment', paymentStatus: 'pending' } },
+    { jobId: 'job_2', type: 'payment_status_updated', ts: 't2', payload: { status: 'processing' } },
+  ]);
+  let job = gw.displayState().jobs[0];
+  assert.equal(job.status, 'awaiting_payment');
+  assert.equal(job.paymentStatus, 'processing');
+  assert.equal(job.payment, undefined);
+  gw.applyEvents([{ jobId: 'job_2', type: 'payment_status_updated', ts: 't3', payload: {
+    status: 'settled', transactionId: '0.0.1@1.2', network: 'hedera:testnet', amount: '0.05',
+    settledAt: 's', verifiedAt: 'v', hashscanUrl: 'https://hashscan.io/testnet/transaction/0.0.1-1-2' } }]);
+  job = gw.displayState().jobs[0];
+  assert.equal(job.status, 'awaiting_payment');
+  assert.equal(job.paymentStatus, 'settled');
+  assert.deepEqual(job.payment, { transactionId: '0.0.1@1.2', network: 'hedera:testnet', amount: '0.05',
+    settledAt: 's', verifiedAt: 'v', hashscanUrl: 'https://hashscan.io/testnet/transaction/0.0.1-1-2' });
+});
+
 test('display endpoint: token enforced when configured', async () => {
   const gw = createGateway(loadConfig({ ...BASE, DISPLAY_TOKEN: 'disp' }), { log: quiet });
   const server = gw.createDisplayServer();

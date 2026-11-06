@@ -57,6 +57,9 @@ _TICK = 0.1
 # these payload fields: status values, never documents, prices or customer data.
 FORWARDED_EVENTS = {"job_status_updated", "payment_status_updated", "execution_authorized"}
 _FORWARDED_FIELDS = ("status", "paymentStatus", "deviceStatus", "state")
+# Settlement proof for the display, forwarded ONLY once the backend verified the signed
+# callback (payment_status_updated with status "settled"). Public on HashScan anyway.
+_SETTLED_FIELDS = ("transactionId", "network", "amount", "settledAt", "verifiedAt", "hashscanUrl")
 
 # The agent may call these printer adapter endpoints through the backend (never /print).
 _AGENT_ALLOWED = (
@@ -174,13 +177,16 @@ def on_event(event: dict[str, Any]) -> None:
     if job is None or store.is_demo_shop(job.shop_id):
         return
     payload = event.get("payload") or {}
+    fields = {k: payload[k] for k in _FORWARDED_FIELDS if k in payload}
+    if event["type"] == "payment_status_updated" and payload.get("status") == "settled":
+        fields.update({k: payload[k] for k in _SETTLED_FIELDS if payload.get(k) is not None})
     with _relay.lock:
         _relay.events.append({
             "jobId": job.job_id,
             "shopId": job.shop_id,
             "type": event["type"],
             "ts": event.get("ts"),
-            "payload": {k: payload[k] for k in _FORWARDED_FIELDS if k in payload},
+            "payload": fields,
         })
 
 
