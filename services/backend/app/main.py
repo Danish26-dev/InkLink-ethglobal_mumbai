@@ -25,7 +25,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import gateway_relay, zerog
+from . import chain, gateway_relay, zerog
 from .config import get_settings
 from .devices import router as devices_router
 from .manage import bootstrap_shopkeeper_from_env
@@ -54,11 +54,13 @@ async def lifespan(_app: FastAPI):
         log.warning("Bootstrap shopkeeper not created: %s", exc)
     task = asyncio.create_task(retention_loop())
     reconcile = asyncio.create_task(payment_reconcile_loop())
+    chain_sender = asyncio.create_task(chain.sender_loop())  # idle until the registry is configured
     try:
         yield
     finally:
         task.cancel()
         reconcile.cancel()
+        chain_sender.cancel()
         # Graceful shutdown (Cloud Run sends SIGTERM): release long-polls, write pending state.
         gateway_relay.shutdown()
         get_store().close()
@@ -108,6 +110,10 @@ def create_app() -> FastAPI:
     @app.get("/api/v1/health")
     async def api_health():
         return await health()
+
+    @app.get("/api/v1/chain/status")
+    async def chain_status():  # public: contract address, network, record counts (no secrets)
+        return chain.status()
 
     app.include_router(web_router)
     app.include_router(native_router)

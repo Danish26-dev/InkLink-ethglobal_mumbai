@@ -183,7 +183,8 @@ async def device_event(body: DeviceEventIn, request: Request) -> dict[str, Any]:
         job.device_events = (job.device_events + [entry])[-50:]
         job.device_status = _DEVICE_STATUS.get(body.type, job.device_status)
         # Completion only for a job the backend actually submitted to the printer.
-        if body.type == "print_completed" and job.status == "executing":
+        completed_now = body.type == "print_completed" and job.status == "executing"
+        if completed_now:
             job.status = "completed"
         store.touch(job)
         store.save()
@@ -193,4 +194,8 @@ async def device_event(body: DeviceEventIn, request: Request) -> dict[str, Any]:
         "available": body.type in ("print_started", "print_completed"),
     }, source="device")
     events.publish_job_status(job)
+    if completed_now:
+        from . import chain
+
+        chain.queue("job_completed", job.job_id, {"jobCommitment": chain.commitment(job.job_id, job.shop_id), "confirmedBy": "device"})
     return {"ok": True, "jobStatus": job.status, "deviceStatus": job.device_status}

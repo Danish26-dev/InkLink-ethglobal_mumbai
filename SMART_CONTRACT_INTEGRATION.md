@@ -1,14 +1,19 @@
 # Smart contract integration (0G Galileo)
 
-## Current status: not configured
+## Current status: implemented and tested locally, NOT deployed yet
 
-I searched the repository and the latest `origin/main` for Solidity files, Hardhat/Foundry projects, deployment scripts and ABIs, and found none. `InklinkShopRegistry` and `InklinkJobRegistry` are not in this repository, and none have been deployed from it.
-
-So the backend does **not** invent addresses or function signatures. `services/backend/app/chain.py` provides:
-
-- `status()`: reports `not_configured` and lists what is missing (RPC, chain id, addresses, ABI files, signer). The jury demo and `/api/v1/jury/status` show this.
-- `queue(kind, jobId, data)`: records lifecycle facts in a local outbox (`state.json` → `chain_outbox`) with status `pending_not_configured`. Nothing is sent on-chain.
-- `commitment(...)`: 0x-prefixed SHA-256 over references. These are the only values that go into the outbox.
+- **The contract:** `contracts/contracts/InklinkRegistry.sol` is a single registry for shops, jobs and lifecycle records. Only hashes go on-chain, and only authorised writers can write.
+  - The Hardhat project lives in `contracts/`, with 5 tests on the local Hardhat network.
+  - The deploy script refuses to run if the RPC's chain id doesn't match.
+  - The ABI is exported to `services/backend/app/abi/InklinkRegistry.json`.
+- **Not deployed:** no address exists yet, and none is invented. See `contracts/README.md` for how to deploy.
+- **The backend sender:** `services/backend/app/chain.py` sends queued records to the registry once the RPC, chain id, address and writer key are configured. It checks that the RPC's chain id matches before sending anything. For each record it stores the real receipt: tx hash, block number, and `confirmed` or `reverted`.
+  - Until it is configured, records stay `pending_not_configured` and nothing is sent.
+  - The sender is unit-tested against a fake JSON-RPC that decodes every signed transaction. That is not on-chain proof.
+- **Where to see it:**
+  - `GET /api/v1/chain/status` (public)
+  - each job's `chain` block in `GET /api/v1/jobs/{id}`
+  - the "On-chain audit" card in the customer app, with explorer links only for real receipts
 
 ## What is queued today, and when
 

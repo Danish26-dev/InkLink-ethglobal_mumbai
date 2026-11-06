@@ -132,9 +132,12 @@ class Settings:
     device_token: str = field(default="", repr=False)
     device_offline_after_seconds: int = 60
 
-    # 0G Galileo testnet contracts (InklinkShopRegistry, InklinkJobRegistry).
+    # 0G Galileo testnet: InklinkRegistry (contracts/), hash-only job audit trail.
     galileo_rpc_url: str = ""
     galileo_chain_id: str = ""
+    registry_address: str = ""
+    registry_abi_path: str = ""
+    galileo_explorer_url: str = "https://chainscan-galileo.0g.ai"
     shop_registry_address: str = ""
     job_registry_address: str = ""
     shop_registry_abi_path: str = ""
@@ -206,6 +209,9 @@ def get_settings() -> Settings:
         device_offline_after_seconds=int(_env("DEVICE_OFFLINE_AFTER_SECONDS", "60")),
         galileo_rpc_url=_env("ZERO_G_GALILEO_RPC_URL"),
         galileo_chain_id=_env("ZERO_G_GALILEO_CHAIN_ID"),
+        registry_address=_env("INKLINK_REGISTRY_ADDRESS"),
+        registry_abi_path=_env("INKLINK_REGISTRY_ABI_PATH"),
+        galileo_explorer_url=_env("ZERO_G_GALILEO_EXPLORER_URL", "https://chainscan-galileo.0g.ai").rstrip("/"),
         shop_registry_address=_env("INKLINK_SHOP_REGISTRY_ADDRESS"),
         job_registry_address=_env("INKLINK_JOB_REGISTRY_ADDRESS"),
         shop_registry_abi_path=_env("INKLINK_SHOP_REGISTRY_ABI_PATH"),

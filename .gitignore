@@ -75,3 +75,7 @@ _work/
 *.sqlite3
 *.db
 .data/
+
+# Hardhat build output
+contracts/artifacts/
+contracts/cache/

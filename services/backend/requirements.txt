@@ -5,4 +5,8 @@ pydantic==2.9.2
 httpx==0.27.2
 cryptography==43.0.3
 pypdf==5.1.0
+# 0G Galileo registry writes: local transaction signing + ABI encoding (no web3 stack).
+eth-account==0.13.4
+eth-abi==6.0.0
+eth-utils==6.0.0
 pytest==8.3.3

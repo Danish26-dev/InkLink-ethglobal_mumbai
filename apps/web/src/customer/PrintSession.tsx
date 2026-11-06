@@ -213,6 +213,7 @@ export function Session({ jobId, shop, onNew, embed }: { jobId: string; shop: Sh
             })} />
           {embed?.afterApproval && job.customerApprovedQuote && embed.afterApproval}
           <Tracking job={job} />
+          <AuditCard job={job} />
         </div>
       </div>
     </main>
@@ -430,6 +431,46 @@ function Pricing({ job, running, locked, busy, handoff, onQuote, onApprove, appr
       {handoff && job.status === 'awaiting_payment' && !job.payment && <PaymentHandoffCard handoff={handoff} />}
       {(job.payment || job.customerApprovedQuote) && !job.demo && <PaymentStatusCard job={job} />}
     </>
+  );
+}
+
+const CHAIN_KIND: Record<string, string> = {
+  shop_registered: 'Shop registered', job_registered: 'Job registered', document_committed: 'Document hash',
+  quote_referenced: 'Quote reference', payment_verified: 'Hedera payment reference', execution_authorized: 'Print authorized',
+  job_completed: 'Job completed', job_failed: 'Job failed',
+};
+const CHAIN_STATUS: Record<string, string> = {
+  pending_not_configured: 'queued · registry not configured', pending: 'queued', submitted: 'submitted, awaiting receipt',
+  confirmed: 'confirmed', reverted: 'reverted', failed: 'not sent (failed)',
+};
+
+/** 0G Galileo audit trail exactly as recorded: hashes only, tx links only from real receipts. */
+function AuditCard({ job }: { job: JobView }) {
+  const c = job.chain;
+  if (!c || c.records.length === 0) return null;
+  const short = (h: string | null) => (h ? `${h.slice(0, 10)}…${h.slice(-6)}` : '—');
+  return (
+    <Card title="On-chain audit · 0G Galileo">
+      <p className="text-xs text-graphite">
+        Only hashes are recorded, never your document or details. Contract {c.contract ? <span className="font-mono">{short(c.contract)}</span> : 'not configured'}
+        {c.chainId ? ` · chain ${c.chainId}` : ''}.
+      </p>
+      <ul className="mt-3 space-y-2 text-xs">
+        {c.records.map((r, i) => (
+          <li key={`${r.kind}-${i}`} className="flex flex-wrap items-baseline gap-x-2">
+            <span className="font-medium">{CHAIN_KIND[r.kind] ?? r.kind}</span>
+            <span className={r.status === 'confirmed' ? 'text-emerald-700' : r.status === 'reverted' || r.status === 'failed' ? 'text-signal' : 'text-graphite'}>
+              {CHAIN_STATUS[r.status] ?? r.status}
+            </span>
+            {r.txHash && r.explorerUrl && (
+              <a href={r.explorerUrl} target="_blank" rel="noreferrer" className="font-mono text-signal underline">{short(r.txHash)}</a>
+            )}
+            {r.blockNumber !== null && <span className="text-graphite">block {r.blockNumber}</span>}
+            {r.dataHash && <span className="basis-full font-mono text-[10px] text-graphite">hash {r.dataHash}</span>}
+          </li>
+        ))}
+      </ul>
+    </Card>
   );
 }
 

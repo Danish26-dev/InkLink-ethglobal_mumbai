@@ -29,6 +29,7 @@ SECRETS=(
   "BACKEND_API_TOKEN|generate|x402 gate -> backend (payments)"
   "PAYMENT_EVENT_SIGNING_SECRET|generate|payment agent settlement callback HMAC (payments)"
   "HEDERA_AGENT_PRIVATE_KEY|enter|Hedera testnet agent account private key (payments)"
+  "ZERO_G_GALILEO_SIGNER_PRIVATE_KEY|enter|0G Galileo registry WRITER key, not the deployer (optional)"
 )
 
 # Which runtime service account may read which secret.
@@ -47,6 +48,7 @@ declare -A ACCESS=(
   [BACKEND_API_TOKEN]="${SA_BACKEND} ${SA_GATE}"
   [PAYMENT_EVENT_SIGNING_SECRET]="${SA_BACKEND} ${SA_PAYMENT}"
   [HEDERA_AGENT_PRIVATE_KEY]="${SA_PAYMENT}"
+  [ZERO_G_GALILEO_SIGNER_PRIVATE_KEY]="${SA_BACKEND}"
 )
 
 add_version() { # name ; value on stdin
@@ -81,6 +83,8 @@ invalid_reason() { # name value
     BOOTSTRAP_SHOPKEEPER_PASSWORD)
       (( ${#value} >= 10 )) || { echo "must be at least 10 characters"; return; }
       [[ "${value}" != sk-* ]] || { echo "this looks like a 0G API key, not a password"; return; } ;;
+    ZERO_G_GALILEO_SIGNER_PRIVATE_KEY)
+      [[ "${value}" =~ ^(0x)?[0-9a-fA-F]{64}$ ]] || { echo "expected an EVM private key (64 hex characters)"; return; } ;;
     HEDERA_AGENT_PRIVATE_KEY)
       [[ "${value}" =~ ^(0x)?[0-9a-fA-F]{64}$ || "${value}" =~ ^[0-9a-fA-F]{96,100}$ ]] \
         || { echo "expected a Hedera private key (64 hex characters, or DER hex starting 302e/3030)"; return; } ;;

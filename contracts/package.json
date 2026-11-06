@@ -1,0 +1,19 @@
+{
+  "name": "inklink-contracts",
+  "version": "0.1.0",
+  "private": true,
+  "description": "InklinkRegistry: hash-only, tamper-evident job audit trail on 0G Galileo.",
+  "scripts": {
+    "compile": "hardhat compile",
+    "test": "hardhat test",
+    "deploy:galileo": "hardhat run scripts/deploy.js --network galileo",
+    "export-abi": "node scripts/export-abi.js"
+  },
+  "devDependencies": {
+    "@nomicfoundation/hardhat-chai-matchers": "2.0.8",
+    "@nomicfoundation/hardhat-ethers": "3.0.8",
+    "chai": "4.5.0",
+    "ethers": "6.13.4",
+    "hardhat": "2.22.17"
+  }
+}

@@ -82,6 +82,8 @@ export interface JobView {
   customerApprovedQuote: boolean;
   /** The job's current payment, from backend records. Null before a payment starts. */
   payment: JobPayment | null;
+  /** 0G Galileo InklinkRegistry audit records (hashes only). Null for demo-shop jobs. */
+  chain: JobChain | null;
   shopApproved: boolean;
   /** The operator called request_print_execution for the current configuration. */
   executionRequested: boolean;
@@ -119,6 +121,30 @@ export interface JobPayment {
   hashscanUrl: string | null;
   settledAt: IsoTimestamp | null;
   verifiedAt: IsoTimestamp | null;
+}
+
+/** One lifecycle fact for the 0G Galileo registry. `txHash`/`blockNumber` only from a real receipt. */
+export interface ChainRecord {
+  kind: "shop_registered" | "job_registered" | "document_committed" | "quote_referenced" | "payment_verified"
+    | "execution_authorized" | "job_completed" | "job_failed";
+  status: "pending_not_configured" | "pending" | "submitted" | "confirmed" | "reverted" | "failed";
+  at: IsoTimestamp;
+  dataHash: string | null;
+  jobRef: string | null;
+  txHash: string | null;
+  blockNumber: number | null;
+  confirmedAt: IsoTimestamp | null;
+  explorerUrl: string | null;
+  error: string | null;
+}
+
+export interface JobChain {
+  network: "0g-galileo-testnet";
+  chainId: string | null;
+  contract: string | null;
+  /** bytes32 key of this job in InklinkRegistry (SHA-256 commitment of the job id). */
+  jobRef: string;
+  records: ChainRecord[];
 }
 
 /** 0G trust-mode decision and call metadata for a job. Never includes keys, prompts or completions. */
