@@ -14,6 +14,17 @@ from typing import Any, AsyncIterator
 import httpx
 
 from .config import get_settings
+from .service_auth import auth_headers
+
+
+async def engine_health() -> bool:
+    s = get_settings()
+    try:
+        async with httpx.AsyncClient(timeout=4.0) as client:
+            res = await client.get(f"{s.document_engine_url}/health", headers=await auth_headers(s.document_engine_url))
+            return res.status_code == 200
+    except httpx.HTTPError:
+        return False
 
 
 class ServiceError(Exception):
@@ -64,7 +75,7 @@ async def stream_operator_run(
                 f"{s.agent_url}/api/operator/runs",
                 data=data,
                 files=files,
-                headers={"authorization": f"Bearer {s.agent_service_token}"},
+                headers={"authorization": f"Bearer {s.agent_service_token}", **(await auth_headers(s.agent_url))},
             ) as res:
                 if res.status_code != 200:
                     body = (await res.aread()).decode("utf-8", "ignore")
@@ -91,7 +102,7 @@ async def agent_health() -> dict[str, Any] | None:
     s = get_settings()
     try:
         async with httpx.AsyncClient(timeout=4.0) as client:
-            res = await client.get(f"{s.agent_url}/api/health")
+            res = await client.get(f"{s.agent_url}/api/health", headers=await auth_headers(s.agent_url))
             return res.json() if res.status_code == 200 else None
     except (httpx.HTTPError, ValueError):
         return None
@@ -102,46 +113,61 @@ async def agent_health() -> dict[str, Any] | None:
 async def fetch_engine_output(engine_job_id: str) -> bytes:
     s = get_settings()
     try:
+        headers = await auth_headers(s.document_engine_url)
         async with httpx.AsyncClient(timeout=30.0) as client:
-            res = await client.get(f"{s.document_engine_url}/jobs/{engine_job_id}/download")
+            res = await client.get(f"{s.document_engine_url}/jobs/{engine_job_id}/download", headers=headers)
             if res.status_code != 200:
                 raise ServiceError("ENGINE_OUTPUT_MISSING", "The edited document could not be retrieved.", res.status_code)
             data = res.content
-            await client.delete(f"{s.document_engine_url}/jobs/{engine_job_id}")  # scratch cleanup
+            await client.delete(f"{s.document_engine_url}/jobs/{engine_job_id}", headers=headers)  # scratch cleanup
             return data
     except httpx.HTTPError as exc:
         raise ServiceError("ENGINE_UNREACHABLE", "The document engine is not reachable.") from exc
 
 
 # ───────────── local printer adapter ─────────────
+#
+# PRINTER_MODE=direct  HTTP to PRINTER_AGENT_URL (backend on the shop LAN).
+# PRINTER_MODE=relay   through the shop gateway connector (cloud backend), see gateway_relay.py.
 
 def _printer_headers() -> dict[str, str]:
     token = get_settings().printer_agent_token
     return {"x-printer-agent-token": token} if token else {}
 
 
-async def list_printers() -> dict[str, Any]:
+async def printer_call(method: str, path: str, body: Any = None, timeout: float | None = None) -> tuple[int, Any]:
+    """One printer adapter call -> (HTTP status, JSON body). Raises ServiceError when unreachable.
+
+    Default timeout: 20 s direct; PRINTER_RELAY_TIMEOUT_SECONDS (30 s) through the relay,
+    which covers the connector's own 20 s call to the local adapter plus the round trip.
+    """
     s = get_settings()
+    if s.printer_mode == "relay":
+        from . import gateway_relay
+
+        try:
+            return await gateway_relay.request(method, path, body, timeout=timeout)
+        except gateway_relay.RelayError as exc:
+            raise ServiceError(exc.code, exc.message) from exc
     try:
-        async with httpx.AsyncClient(timeout=20.0) as client:
-            res = await client.get(f"{s.printer_agent_url}/printers", headers=_printer_headers())
-            body = res.json()
-            if res.status_code != 200 or not body.get("ok"):
-                raise ServiceError(body.get("error", {}).get("code", "DISCOVERY_FAILED"), "Printer discovery failed.", res.status_code)
-            return body
+        async with httpx.AsyncClient(timeout=timeout or 20.0) as client:
+            res = await client.request(method, f"{s.printer_agent_url}{path}", json=body, headers=_printer_headers())
+            return res.status_code, res.json()
     except (httpx.HTTPError, ValueError) as exc:
         raise ServiceError("PRINTER_ADAPTER_UNREACHABLE", "The local printer adapter is not reachable.") from exc
+
+
+async def list_printers() -> dict[str, Any]:
+    status, body = await printer_call("GET", "/printers")
+    body = body if isinstance(body, dict) else {}
+    if status != 200 or not body.get("ok"):
+        raise ServiceError((body.get("error") or {}).get("code", "DISCOVERY_FAILED"), "Printer discovery failed.", status)
+    return body
 
 
 async def validate_print_config(config: dict[str, Any]) -> tuple[bool, list[str]]:
-    s = get_settings()
-    try:
-        async with httpx.AsyncClient(timeout=20.0) as client:
-            res = await client.post(f"{s.printer_agent_url}/validate", json={"config": config}, headers=_printer_headers())
-            body = res.json()
-    except (httpx.HTTPError, ValueError) as exc:
-        raise ServiceError("PRINTER_ADAPTER_UNREACHABLE", "The local printer adapter is not reachable.") from exc
-    if res.status_code == 502:
+    status, body = await printer_call("POST", "/validate", {"config": config})
+    if status == 502 or not isinstance(body, dict):
         raise ServiceError("DISCOVERY_FAILED", "Could not validate against the discovered printers.", 502)
     return bool(body.get("ok")), [str(e) for e in body.get("errors", [])]
 
@@ -150,16 +176,27 @@ async def submit_print(config: dict[str, Any], pdf_bytes: bytes) -> dict[str, An
     import base64
 
     s = get_settings()
-    try:
-        async with httpx.AsyncClient(timeout=120.0) as client:
-            res = await client.post(
-                f"{s.printer_agent_url}/print",
-                json={"config": config, "documentBase64": base64.b64encode(pdf_bytes).decode("ascii")},
-                headers=_printer_headers(),
+    if s.printer_mode == "relay":
+        from . import gateway_relay
+
+        # A short-lived reference instead of the file: the connector downloads it.
+        token = gateway_relay.put_document(pdf_bytes)
+        try:
+            status, body = await printer_call(
+                "POST", "/print",
+                {"config": config, "document": {"token": token, "path": f"/api/v1/gateway/documents/{token}",
+                                                "size": len(pdf_bytes), "contentType": "application/pdf"}},
+                timeout=150.0,
             )
-            return {"httpStatus": res.status_code, **res.json()}
-    except (httpx.HTTPError, ValueError) as exc:
-        raise ServiceError("PRINTER_ADAPTER_UNREACHABLE", "The local printer adapter is not reachable.") from exc
+        finally:
+            gateway_relay.drop_document(token)
+    else:
+        status, body = await printer_call(
+            "POST", "/print",
+            {"config": config, "documentBase64": base64.b64encode(pdf_bytes).decode("ascii")},
+            timeout=120.0,
+        )
+    return {"httpStatus": status, **(body if isinstance(body, dict) else {})}
 
 
 # ───────────── payment agent (Hedera x402) ─────────────
@@ -172,7 +209,7 @@ async def call_payment_agent(method: str, path: str, body: dict[str, Any] | None
                 method,
                 f"{s.payment_agent_url}{path}",
                 json=body,
-                headers={"authorization": f"Bearer {s.internal_api_token}"},
+                headers={"authorization": f"Bearer {s.internal_api_token}", **(await auth_headers(s.payment_agent_url))},
             )
             try:
                 return res.status_code, res.json()

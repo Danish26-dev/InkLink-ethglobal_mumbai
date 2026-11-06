@@ -38,7 +38,7 @@ from pydantic import BaseModel, Field
 
 from . import chain, devices, events, zerog
 from .auth import api_error, issue_session, job_for, resolve_principal
-from .clients import ServiceError, agent_health, list_printers, validate_print_config
+from .clients import ServiceError, agent_health, engine_health, list_printers, validate_print_config
 from .config import get_settings
 from .jobs import add_message, quote_expired, start_operator_run
 from .security import new_token
@@ -86,13 +86,7 @@ async def integration_status() -> list[dict[str, Any]]:
     out.append({"id": "zerog", "label": "0G Private Computer", "state": "configured" if configured else "not_configured",
                 "detail": f"keys: {', '.join(configured) or 'none'} · model {zg['modes'][zg['defaultTrustMode']]['model']}"
                           + ("" if configured else " · the demo can use the labelled deterministic fallback operator")})
-    try:
-        import httpx
-
-        async with httpx.AsyncClient(timeout=4.0) as client:
-            engine_ok = (await client.get(f"{s.document_engine_url}/health")).status_code == 200
-    except Exception:  # noqa: BLE001
-        engine_ok = False
+    engine_ok = await engine_health()
     out.append({"id": "engine", "label": "Document Engine", "state": "live" if engine_ok else "unavailable",
                 "detail": "Deterministic document operations." if engine_ok else "Not reachable."})
     try:

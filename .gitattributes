@@ -1,0 +1,6 @@
+# Files executed inside Linux (Cloud Shell, containers) must keep LF endings on every checkout.
+*.sh text eol=lf
+Dockerfile text eol=lf
+*.template text eol=lf
+*.yaml text eol=lf
+*.yml text eol=lf

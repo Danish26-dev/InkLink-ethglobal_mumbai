@@ -1,0 +1,87 @@
+# Inklink web front door (rendered at container start by the nginx image's envsubst:
+# only ${PORT} and ${BACKEND_URL} are substituted; nginx's own $variables are untouched).
+#
+#   /                         landing page build
+#   /pwa/*                    PWA assets (built with base /pwa/)
+#   /portal /app /shop /jury /demo (and sub-paths)  -> PWA index.html (client routing)
+#   /sw.js                    PWA service worker (scope /)
+#   /api/*                    reverse proxy to the Inklink backend (same origin, so the
+#                             SameSite=Strict session cookies and SSE work unchanged)
+
+server {
+    listen ${PORT};
+    listen [::]:${PORT};
+    server_name _;
+    server_tokens off;
+
+    root /usr/share/nginx/html;
+    index index.html;
+
+    client_max_body_size 30m;
+
+    add_header X-Content-Type-Options nosniff always;
+    add_header Referrer-Policy strict-origin-when-cross-origin always;
+    add_header X-Frame-Options DENY always;
+
+    gzip on;
+    gzip_types text/css application/javascript application/json image/svg+xml application/manifest+json;
+    gzip_min_length 1024;
+
+    # Liveness of this container only (does not call the backend).
+    location = /healthz {
+        access_log off;
+        default_type text/plain;
+        return 200 "ok\n";
+    }
+
+    location /api/ {
+        proxy_pass ${BACKEND_URL};
+        # Host = the backend's own host (nginx default $proxy_host); SNI for HTTPS upstreams.
+        proxy_ssl_server_name on;
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Host $host;
+        # Server-sent events: no buffering, long reads (Cloud Run request timeout 3600 s).
+        proxy_buffering off;
+        proxy_cache off;
+        proxy_request_buffering off;
+        proxy_read_timeout 3600s;
+        proxy_send_timeout 3600s;
+    }
+
+    location = /sw.js {
+        alias /usr/share/nginx/html/pwa/sw.js;
+        default_type application/javascript;
+        add_header Cache-Control "no-cache" always;
+        add_header X-Content-Type-Options nosniff always;
+        add_header Referrer-Policy strict-origin-when-cross-origin always;
+        add_header X-Frame-Options DENY always;
+    }
+
+    location ~ ^/(portal|app|shop|jury|demo)(/.*)?$ {
+        default_type text/html;
+        add_header Cache-Control "no-cache" always;
+        add_header X-Content-Type-Options nosniff always;
+        add_header Referrer-Policy strict-origin-when-cross-origin always;
+        add_header X-Frame-Options DENY always;
+        try_files /pwa/index.html =404;
+    }
+
+    location /pwa/ {
+        try_files $uri $uri/ /pwa/index.html;
+    }
+
+    # Hashed build assets can be cached for a long time.
+    location ~* ^/(pwa/)?assets/ {
+        add_header Cache-Control "public, max-age=31536000, immutable" always;
+        add_header X-Content-Type-Options nosniff always;
+        add_header Referrer-Policy strict-origin-when-cross-origin always;
+        add_header X-Frame-Options DENY always;
+        try_files $uri =404;
+    }
+
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+}

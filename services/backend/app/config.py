@@ -149,6 +149,25 @@ class Settings:
     landing_dist_dir: str = ""
     web_dist_dir: str = ""
 
+    # ── Deployment (Cloud Run) ──
+    # 0 = write state.json after every mutation (local default). >0 = coalesce writes
+    # (DATA_DIR on a Cloud Storage volume); pending changes are flushed on shutdown.
+    state_save_interval_seconds: float = 0.0
+    # Ed25519 gateway identity seed. Empty = DATA_DIR/gateway_ed25519.key (created on
+    # first start). On Cloud Run: a Secret Manager secret mounted as a read-only file.
+    gateway_identity_key_path: str = ""
+    # "gcp-id-token": add a Google-signed ID token (X-Serverless-Authorization) to calls
+    # to private Cloud Run services (agent, document engine, payment agent).
+    service_auth: str = ""
+    # "direct": call the printer adapter at PRINTER_AGENT_URL (same LAN).
+    # "relay": the shop gateway connector polls this backend outbound (cloud backend).
+    printer_mode: str = "direct"
+    gateway_token: str = field(default="", repr=False)
+    printer_relay_timeout_seconds: float = 30.0
+    # Public HTTPS origin of this backend; when set it is added (signed) to the shop QR
+    # so the native app can reach a cloud-hosted backend.
+    public_api_origin: str = ""
+
     @property
     def payments_configured(self) -> bool:
         return bool(
@@ -195,6 +214,13 @@ def get_settings() -> Settings:
         zero_g_storage_indexer_url=_env("ZERO_G_STORAGE_INDEXER_URL"),
         landing_dist_dir=_env("LANDING_DIST_DIR"),
         web_dist_dir=_env("WEB_DIST_DIR"),
+        state_save_interval_seconds=float(_env("STATE_SAVE_INTERVAL_SECONDS", "0")),
+        gateway_identity_key_path=_env("GATEWAY_IDENTITY_KEY_PATH"),
+        service_auth=_env("SERVICE_AUTH").lower(),
+        printer_mode=_env("PRINTER_MODE", "direct").lower(),
+        gateway_token=_env("GATEWAY_TOKEN"),
+        printer_relay_timeout_seconds=float(_env("PRINTER_RELAY_TIMEOUT_SECONDS", "30")),
+        public_api_origin=_env("PUBLIC_API_ORIGIN").rstrip("/"),
         port=int(_env("PORT", "8000")),
         host=_env("HOST", "127.0.0.1"),
         data_dir=Path(_env("DATA_DIR", "./data")).resolve(),

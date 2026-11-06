@@ -28,6 +28,30 @@ Status legend: **Configured** = set on this machine · **Tested** = exercised by
 | Agent ↔ backend | backend + `services/strands-agent/.env` | `AGENT_SERVICE_TOKEN` (identical) | Configured locally, tested |
 | Shopkeeper accounts | backend state (no env) | `python -m app.manage create-shopkeeper ...` | Tested |
 
+## Cloud Run deployment (staging)
+
+On Cloud Run nothing reads a `.env` file. Secrets are Secret Manager secrets (created by
+`deploy/gcp/05-configure-secrets.sh`, read with `read -s`, never echoed) and each service account can
+read only its own. Non-secret settings come from `deploy/gcp/env/staging.env` (git-ignored, from
+`staging.env.example`). Full table: [DEPLOYMENT_ARCHITECTURE.md](DEPLOYMENT_ARCHITECTURE.md#secrets-secret-manager).
+Local `docker compose` reads one git-ignored root `.env` (from `deploy/env/compose.env.example`) and
+hands each container only its variables.
+
+New deployment variables (backend unless noted):
+
+| Variable | Purpose | Cloud Run value |
+|---|---|---|
+| `PRINTER_MODE` | `direct` (backend on the shop LAN) or `relay` (shop gateway connector polls the backend) | `relay` |
+| `GATEWAY_TOKEN` | bearer token of the shop gateway connector (`services/shop-gateway`, same value there) | secret |
+| `PRINTER_RELAY_TIMEOUT_SECONDS` | wait for a relayed printer call (default 30) | default |
+| `GATEWAY_IDENTITY_KEY_PATH` | file with the 32-byte Ed25519 QR-signing seed (raw, hex or base64) | `/secrets/gateway/identity-key` (secret `GATEWAY_IDENTITY_KEY`) |
+| `PUBLIC_API_ORIGIN` | https origin signed into the shop QR as `gateway.cloudOrigin` | backend URL |
+| `SERVICE_AUTH` | `gcp-id-token`: send Cloud Run ID tokens to private services (backend and agent) | `gcp-id-token` |
+| `STATE_SAVE_INTERVAL_SECONDS` | coalesce `state.json` writes (0 = every change) | `2` |
+| `SESSION_COOKIE_SECURE` | Secure session cookie behind HTTPS | `true` |
+| `BOOTSTRAP_SHOPKEEPER_EMAIL` / `_NAME` / `_SHOPS` + secret `BOOTSTRAP_SHOPKEEPER_PASSWORD` | create the first shopkeeper at start if missing (never overwrites) | optional |
+| `EXPO_PUBLIC_CLOUD_ORIGIN` (mobile, EAS `staging` profile) | cloud backend for the probe and as a last pairing candidate | backend URL |
+
 ## Generating shared secrets
 
 ```powershell

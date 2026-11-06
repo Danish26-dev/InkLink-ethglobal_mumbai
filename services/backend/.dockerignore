@@ -1,0 +1,18 @@
+# Never copy local state, secrets or dev artifacts into the image.
+.env
+.env.*
+!.env.example
+data
+venv
+.venv
+tests
+__pycache__
+**/__pycache__
+*.pyc
+*.log
+.pytest_cache
+*.key
+.git
+.gitignore
+README.md
+Dockerfile

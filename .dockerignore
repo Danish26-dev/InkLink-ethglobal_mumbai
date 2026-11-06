@@ -1,13 +1,38 @@
+# Build context for images built from the REPO ROOT:
+#   services/strands-agent/Dockerfile, services/payment-agent/Dockerfile,
+#   deploy/web/Dockerfile (landing page + PWA).
+# Backend and document engine build from their own folders (own .dockerignore).
+#
+# Never send secrets, local state or dependencies to the builder.
 **/node_modules
 **/.env
 **/.env.*
 !**/.env.example
+**/*.key
+**/*.pem
+**/secrets
 **/.data
+**/data
+**/venv
+**/.venv
+**/__pycache__
+**/_work
+**/dist
+**/coverage
+**/*.log
+**/*.tsbuildinfo
 .git
 .kiro
-apps
+qa-shots
 docs
-public
-src
-**/dist
-**/*.log
+# Not used by any root-context image
+apps/mobile
+services/backend
+services/document-engine
+services/local-printer-agent
+services/mock-gateway
+services/shop-gateway
+document-engine
+strands-agent
+**/test
+**/tests

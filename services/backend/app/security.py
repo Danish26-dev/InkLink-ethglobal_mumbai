@@ -64,13 +64,48 @@ class GatewayIdentity:
     def load_or_create(cls, path: Path) -> "GatewayIdentity":
         """Persist the key so the QR the app pinned stays valid across restarts."""
         if path.exists():
-            return cls.from_seed(path.read_bytes())
+            return cls.from_seed(cls.read_seed(path))
         path.parent.mkdir(parents=True, exist_ok=True)
         seed = secrets.token_bytes(32)
         fd = os.open(str(path), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
         with os.fdopen(fd, "wb") as fh:
             fh.write(seed)
         return cls.from_seed(seed)
+
+    @staticmethod
+    def read_seed(path: Path) -> bytes:
+        """32-byte seed as raw bytes, 64 hex characters or Base64/Base64URL text.
+
+        Text forms let the seed live in Secret Manager (mounted as a file) without
+        binary handling in the shell.
+        """
+        raw = path.read_bytes()
+        if len(raw) == 32:
+            return raw
+        text = raw.decode("ascii", "ignore").strip()
+        if len(text) == 64:
+            try:
+                return bytes.fromhex(text)
+            except ValueError:
+                pass
+        try:
+            seed = b64url_decode(text.replace("+", "-").replace("/", "_").rstrip("="))
+        except (ValueError, TypeError):
+            seed = b""
+        if len(seed) != 32:
+            raise ValueError(f"Gateway identity key at {path} is not a 32-byte Ed25519 seed.")
+        return seed
+
+    @classmethod
+    def load_configured(cls, settings) -> "GatewayIdentity":
+        """GATEWAY_IDENTITY_KEY_PATH must exist (a mounted secret is never created);
+        without it the key is kept in DATA_DIR and created on first start."""
+        if settings.gateway_identity_key_path:
+            path = Path(settings.gateway_identity_key_path)
+            if not path.is_file():
+                raise RuntimeError("GATEWAY_IDENTITY_KEY_PATH is set but the file does not exist.")
+            return cls.from_seed(cls.read_seed(path))
+        return cls.load_or_create(settings.data_dir / "gateway_ed25519.key")
 
     def sign(self, text: str) -> str:
         return b64url_encode(self._key.sign(text.encode("utf-8")))
@@ -93,7 +128,11 @@ def build_qr_payload(
     ttl_seconds: int,
     nonce: str | None = None,
     expires_at: str | None = None,
+    cloud_origin: str | None = None,
 ) -> dict[str, Any]:
+    """`cloud_origin` (optional, https) is signed with the rest: the app may use it when
+    the backend is hosted in the cloud. It is omitted entirely when unset, so the
+    signed bytes of a LAN-only QR are unchanged."""
     from .store import iso_from_epoch
 
     unsigned = {
@@ -101,7 +140,8 @@ def build_qr_payload(
         "version": "1.0",
         "shopId": shop_id,
         "gatewayId": gateway_id,
-        "gateway": {"discovery": "local", "mdns": mdns, "ip": ip or None, "port": port},
+        "gateway": {"discovery": "local", "mdns": mdns, "ip": ip or None, "port": port,
+                    "cloudOrigin": cloud_origin or None},
         "publicKey": identity.public_key,
         "nonce": nonce or b64url_encode(secrets.token_bytes(12)),
         "expiresAt": expires_at or iso_from_epoch(time.time() + ttl_seconds),

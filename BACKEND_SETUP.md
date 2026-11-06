@@ -17,6 +17,22 @@ Or start the whole stack with `.\scripts\dev-stack.ps1`. Then everything is serv
 
 Admin CLI (`python -m app.manage`): `create-shopkeeper`, `list-shopkeepers`, `set-password`, `disable` (also ends that account's sessions), `register-shop`.
 
+## Run in a container / on Cloud Run
+
+```bash
+docker build -t inklink-backend services/backend        # multi-stage, non-root, HEALTHCHECK /health
+docker compose up -d --build                            # whole stack, see DOCKER_DEPLOYMENT.md
+```
+
+On Cloud Run (`deploy/gcp/04-deploy-services.sh`) the backend runs as **one instance** with CPU always
+allocated and a 3600 s request timeout (SSE). `DATA_DIR=/data` is the private bucket
+`gs://inklink-513817-backend-data` mounted with Cloud Storage FUSE; `state.json` is written at most every
+`STATE_SAVE_INTERVAL_SECONDS` and flushed on SIGTERM. The QR-signing key is the secret
+`GATEWAY_IDENTITY_KEY` mounted at `GATEWAY_IDENTITY_KEY_PATH`. Calls to the private agent, engine and
+payment agent carry a Cloud Run ID token (`SERVICE_AUTH=gcp-id-token`) on top of the service bearer
+tokens. There is no shell on Cloud Run: the first shopkeeper is created from `BOOTSTRAP_SHOPKEEPER_*`.
+Variables: [ENVIRONMENT_SETUP.md](ENVIRONMENT_SETUP.md#cloud-run-deployment-staging).
+
 ## Authentication
 
 | Caller | How | Scope |
@@ -125,3 +141,17 @@ A spooler acceptance is `executing`. Only the shop, or a device `print_completed
 ## Data and retention
 
 State is in-memory with an atomic JSON snapshot at `DATA_DIR/state.json`. Document files are deleted `DOCUMENT_RETENTION_HOURS` after a job's last change; paid jobs waiting to print, or printing, are kept. Logs never contain document text, prompts or completions.
+
+## Printer relay (cloud backend)
+
+With `PRINTER_MODE=relay` the backend never connects to the shop network. The shop gateway connector (`services/shop-gateway`) authenticates with `Authorization: Bearer $GATEWAY_TOKEN`:
+
+| Endpoint | Purpose |
+|---|---|
+| `POST /api/v1/gateway/poll` `{gatewayId, maxWaitSeconds≤25}` | long-poll → `{requests:[{id,method,path,body}], events:[…]}` |
+| `POST /api/v1/gateway/results` `{results:[{id,status,body}]}` | answers; late or unknown ids are dropped |
+| `GET /api/v1/gateway/documents/{token}` | PDF of a print request (one reference per request, ≤ 10 min, removed when the print call completes) |
+
+Relayed operations: `GET /printers`, `GET /printers/{id}/availability`, `POST /validate`, `POST /print`. A request that is not picked up before the timeout is withdrawn, so it can never run late. `events` carry only `status`, `paymentStatus`, `deviceStatus` of real (non-demo) jobs for the ESP32 display.
+
+The agent reaches the printer through the backend: `GET|POST /api/v1/internal/printer/{printers | printers/{id}/availability | validate}` with `x-printer-agent-token` (never `/print`). `/health` reports `printer: {mode, configured, connected, lastPollAt}`.

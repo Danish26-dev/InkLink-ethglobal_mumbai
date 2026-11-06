@@ -1,0 +1,15 @@
+# Files NOT uploaded by `gcloud builds submit` (deploy/gcp/03-build-images.sh).
+# Everything git ignores (secrets, .env files, keys, node_modules, local data) ...
+#!include:.gitignore
+# ... plus files the image builds never need.
+.git
+.kiro
+docs/migration
+qa-shots
+apps/mobile/node_modules
+deploy/gcp/rendered
+deploy/gcp/env/*.env
+**/venv
+**/.venv
+**/data
+**/_work

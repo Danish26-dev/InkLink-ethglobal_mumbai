@@ -13,6 +13,7 @@ import type {
   ShopQrPayload,
 } from "@inklink/shared-schemas";
 import { InklinkApi } from "@/api/client";
+import { appConfig } from "@/config";
 import { ConnectionManager } from "@/connection/connection-state";
 import { newPairingChallenge } from "@/crypto/device-key";
 import { publicKeyFingerprint } from "@/crypto/ed25519";
@@ -97,7 +98,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       pair: async (qrText) => {
         const qr = validateScannedQr(qrText);
 
-        const origin = await pickReachableOrigin(gatewayCandidates(qr));
+        const origin = await pickReachableOrigin(gatewayCandidates(qr, appConfig.cloudOrigin));
         if (!origin) {
           throw new PairingError(
             "GATEWAY_UNREACHABLE",
@@ -128,6 +129,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           gatewayMdns: qr.gateway.mdns,
           gatewayIp: qr.gateway.ip ?? null,
           gatewayPort: qr.gateway.port,
+          gatewayCloudOrigin: qr.gateway.cloudOrigin ?? null,
           pairedAt: paired.pairedAt,
         });
 
@@ -142,7 +144,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         const pinned: PinnedShopKey = { publicKey: row.publicKey, gatewayId: row.gatewayId };
 
         const origin = await pickReachableOrigin(
-          gatewayCandidates({ gateway: { ip: row.gatewayIp, mdns: row.gatewayMdns, port: row.gatewayPort } }),
+          gatewayCandidates(
+            { gateway: { ip: row.gatewayIp, mdns: row.gatewayMdns, port: row.gatewayPort, cloudOrigin: row.gatewayCloudOrigin } },
+            appConfig.cloudOrigin,
+          ),
         );
         if (!origin) {
           throw new PairingError(
@@ -172,7 +177,13 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           gatewayId: row.gatewayId,
           publicKey: row.publicKey,
           publicKeyFingerprint: row.publicKeyFingerprint,
-          gateway: { discovery: "local", mdns: row.gatewayMdns, port: row.gatewayPort, ...(row.gatewayIp ? { ip: row.gatewayIp } : {}) },
+          gateway: {
+            discovery: "local",
+            mdns: row.gatewayMdns,
+            port: row.gatewayPort,
+            ...(row.gatewayIp ? { ip: row.gatewayIp } : {}),
+            ...(row.gatewayCloudOrigin ? { cloudOrigin: row.gatewayCloudOrigin } : {}),
+          },
           pairedAt: row.pairedAt,
         };
         connectionRef.current.setShopIdentified(true);
