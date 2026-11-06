@@ -195,7 +195,7 @@ describe("recover()", () => {
     const { agent: after } = makeAgent("hang");
     const summary = await after.recover();
 
-    assert.deepEqual(summary, { reverified: 0, outcomeUnknown: 1, callbacksResent: 0 });
+    assert.deepEqual(summary, { reverified: 0, outcomeUnknown: 1, callbacksResent: 0, auditsRetried: 0 });
     assert.equal(after.status(p.paymentId)?.status, "failed");
     assert.equal(after.inspect(p.paymentId)?.failureReason, "interrupted_by_restart_outcome_unknown");
     // Funds may have moved, so the 0.60 must stay reserved.
@@ -273,7 +273,7 @@ describe("recover()", () => {
   it("does nothing for a clean state", async () => {
     store.enablePersistence(file);
     const { agent, delivered } = makeAgent("hang");
-    assert.deepEqual(await agent.recover(), { reverified: 0, outcomeUnknown: 0, callbacksResent: 0 });
+    assert.deepEqual(await agent.recover(), { reverified: 0, outcomeUnknown: 0, callbacksResent: 0, auditsRetried: 0 });
     assert.equal(delivered.length, 0);
   });
 });

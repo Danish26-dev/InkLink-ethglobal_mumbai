@@ -58,6 +58,11 @@ export const serviceConfig = {
    * cloud-synced folder (OneDrive/Dropbox can lock files mid-write).
    */
   stateFile: optional("AGENT_STATE_FILE", ".data/agent-state.json"),
+  /**
+   * HCS topic for the tamper-evident spend audit log (create it with `npm run setup:audit-topic`).
+   * Unset = audit log off; payments work the same either way.
+   */
+  auditTopicId: optional("HCS_AUDIT_TOPIC_ID", "") || null,
 };
 
 /** Secrets and trust boundaries for the HTTP service. Fails fast if absent. */

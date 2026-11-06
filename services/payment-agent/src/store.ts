@@ -44,6 +44,10 @@ export interface PaymentRecord {
   callbackAttempts?: number;
   /** The exact callback body, kept so an undelivered callback can be re-sent after a restart. */
   event?: PaymentSettledEvent;
+  /** HCS spend audit entry for this settlement (only when an audit topic is configured). */
+  auditStatus?: "pending" | "published" | "failed";
+  auditTopicId?: string;
+  auditSequenceNumber?: string;
   createdAt: string;
 }
 

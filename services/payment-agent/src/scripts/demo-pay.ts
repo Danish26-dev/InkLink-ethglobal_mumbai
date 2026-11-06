@@ -25,6 +25,7 @@ import { PaymentAgent } from "../payment-agent.js";
 import { deliverCallback } from "../settlement.js";
 import { SigningService } from "../signing/signing-service.js";
 import { X402Client } from "../x402-client.js";
+import { HcsAuditPublisher, hashscanTopicUrl } from "../hcs-audit.js";
 import { createX402Gate } from "../x402-gate.js";
 import { createDevDevice } from "./dev-device.js";
 
@@ -50,7 +51,13 @@ async function main() {
 
   try {
     const signing = new SigningService();
+    signingForClose = signing;
+    const audit = serviceConfig.auditTopicId
+      ? new HcsAuditPublisher(serviceConfig.auditTopicId, (topic, msg) => signing.submitTopicMessage(topic, msg))
+      : undefined;
+    console.log(audit ? `HCS audit log: ${hashscanTopicUrl(audit.topicId)}` : "HCS audit log: off (HCS_AUDIT_TOPIC_ID not set)");
     const agent = new PaymentAgent(new X402Client(signing), {
+      audit,
       allowedResourceOrigins: [`http://localhost:${serviceConfig.gatePort}`],
       payerAccountId: signing.agentAccountId,
       deliver: (event) =>
@@ -98,8 +105,14 @@ async function main() {
     }
     if (!rec) throw new Error("payment record vanished");
 
-    // Give the callback retries a moment to report.
-    if (rec.status === "settled") await sleep(3000);
+    // Give the callback retries and the HCS audit entry a moment to report.
+    if (rec.status === "settled") {
+      const auditDeadline = Date.now() + 30_000;
+      await sleep(3000);
+      while (audit && agent.inspect(started.paymentId)?.auditStatus === "pending" && Date.now() < auditDeadline) {
+        await sleep(1000);
+      }
+    }
     rec = agent.inspect(started.paymentId) ?? rec;
 
     console.log("\n──────── RESULT ────────");
@@ -110,6 +123,13 @@ async function main() {
       console.log(`settled at:    ${rec.settlementTimestamp}`);
       console.log(`HashScan:      https://hashscan.io/testnet/transaction/${rec.transactionId}`);
       console.log(`callback:      ${rec.callbackStatus} (attempts: ${rec.callbackAttempts ?? 0})`);
+      if (audit) {
+        console.log(
+          `HCS audit:     ${rec.auditStatus}` +
+            (rec.auditSequenceNumber ? ` (topic ${rec.auditTopicId}, sequence #${rec.auditSequenceNumber})` : ""),
+        );
+        console.log(`audit log:     ${hashscanTopicUrl(audit.topicId)}`);
+      }
     }
 
     const expected = negative ? "failed" : "settled";
@@ -122,8 +142,11 @@ async function main() {
     process.exitCode = ok ? 0 : 1;
   } finally {
     gate.close();
+    signingForClose?.close();
   }
 }
+
+let signingForClose: SigningService | undefined;
 
 main().catch((err) => {
   console.error("demo-pay failed:", err instanceof Error ? err.message : err);

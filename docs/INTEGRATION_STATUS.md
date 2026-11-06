@@ -38,7 +38,7 @@ blockchain settlement (dev rule 8).
 | Module | Status |
 |--------|--------|
 | `packages/shared-schemas` | Contracts, wire format (canonical JSON, Base64URL), authorization, callback headers/event. ESM (`"type":"module"`). |
-| `services/payment-agent` | Bearer auth, device-signature verification, backend-supplied intent, resource allowlist, exact-match x402 policy, mirror-node verification, spend reservation, HMAC callback with retries, x402 gate, durable state file with restart recovery (re-verifies claimed transactions, never releases spend when the outcome is unknown, resends undelivered callbacks). **78 tests pass.** |
+| `services/payment-agent` | Bearer auth, device-signature verification, backend-supplied intent, resource allowlist, exact-match x402 policy, mirror-node verification, spend reservation, HMAC callback with retries, x402 gate, durable state file with restart recovery (re-verifies claimed transactions, never releases spend when the outcome is unknown, resends undelivered callbacks). HCS spend audit log (agent-signed topic, no admin key). **84 tests pass.** |
 | `apps/mobile` | Expo SDK 58. Camera QR scan, real Ed25519 verification, challenge-response pairing, session auth with re-handshake, reconnect to paired shops by pinned key, upload progress with idempotent retry, device key in secure storage, signed authorization, quote with USDC settlement + deadline, 12 screens. **39 tests pass**; typecheck clean; Android and web bundles compile. **Not confirmed on a physical phone.** |
 | `services/mock-gateway` | Mock backend: signed QR, pairing, sessions, FX (mock rate, rounds up), agent calls, callback receiver, gate requirements endpoint. **11 tests pass.** |
 
@@ -81,7 +81,7 @@ Blocky402 facilitator (24 checks, `npm run headless` in `apps/mobile`):
 - **A real funded settlement through the real backend and the real merchant account.** One testnet
   settlement exists (see above), but it used a stand-in merchant and the demo script.
 - Gateway TLS + certificate/public-key pinning (production).
-- BLE. HCS publishing (backend's). OfflinePay is only partly done: the core (signed vouchers, verification, limits, replay protection, persistence, reconciliation) is built and tested, but the gateway and backend endpoints that carry vouchers are not agreed or built. On-device SLM and document editing were dropped from the app (team decision): users pick copies, page range, colour and paper size directly.
+- BLE. HCS job-lifecycle events (backend's; the agent already publishes its own spend audit log to topic `0.0.11339168`). OfflinePay is only partly done: the core (signed vouchers, verification, limits, replay protection, persistence, reconciliation) is built and tested, but the gateway and backend endpoints that carry vouchers are not agreed or built. On-device SLM and document editing were dropped from the app (team decision): users pick copies, page range, colour and paper size directly.
 - The real backend/gateway integration (waiting on XYZ's implementation).
 
 ## Frozen contracts (team lead, round 3)

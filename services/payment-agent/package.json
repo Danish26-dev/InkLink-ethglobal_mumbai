@@ -12,11 +12,13 @@
     "check:facilitator": "tsx src/scripts/check-facilitator.ts",
     "setup:wallet": "tsx src/scripts/setup-wallet.ts",
     "setup:merchant": "tsx src/scripts/associate-merchant.ts",
+    "setup:audit-topic": "tsx src/scripts/setup-audit-topic.ts",
     "demo:pay": "tsx src/scripts/demo-pay.ts",
     "typecheck": "tsc --noEmit",
     "test": "node --test --import tsx ./test/*.test.ts"
   },
   "dependencies": {
+    "@hiero-ledger/sdk": "2.90.1",
     "@inklink/shared-schemas": "file:../../packages/shared-schemas",
     "@x402/core": "2.30.0",
     "@x402/express": "2.30.0",

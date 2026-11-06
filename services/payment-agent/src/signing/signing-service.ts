@@ -16,7 +16,16 @@ import type { PaymentRequirements } from "@x402/core/types";
 import { wrapFetchWithPayment } from "@x402/fetch";
 import { createClientHederaSigner, PrivateKey } from "@x402/hedera";
 import { ExactHederaScheme } from "@x402/hedera/exact/client";
+// Same SDK instance that @x402/hedera uses (pinned to the same version, deduplicated).
+import {
+  AccountId,
+  Client,
+  TopicCreateTransaction,
+  TopicId,
+  TopicMessageSubmitTransaction,
+} from "@hiero-ledger/sdk";
 import { HEDERA_TESTNET, loadHederaConfig } from "../config.js";
+import type { AuditReceipt } from "../hcs-audit.js";
 import { toSmallestUnit } from "../money.js";
 
 /** What a single payment is allowed to be. Derived from the vetted intent. */
@@ -42,11 +51,54 @@ function parseEcdsaKey(raw: string): PrivateKey {
 
 export class SigningService {
   private readonly cfg = loadHederaConfig();
+  private readonly key = parseEcdsaKey(this.cfg.agentPrivateKey);
   private readonly signer = createClientHederaSigner(
     this.cfg.agentAccountId,
-    parseEcdsaKey(this.cfg.agentPrivateKey),
+    this.key,
     { network: HEDERA_TESTNET },
   );
+  private hcsClient: Client | null = null;
+
+  /** Testnet client with the agent as operator; the key stays inside this class. */
+  private client(): Client {
+    if (!this.hcsClient) {
+      this.hcsClient = Client.forTestnet().setOperator(AccountId.fromString(this.cfg.agentAccountId), this.key);
+    }
+    return this.hcsClient;
+  }
+
+  /**
+   * Create the spend audit topic. The submit key is the agent's public key, so only this
+   * agent can append; there is no admin key, so the topic can never be changed or deleted.
+   */
+  async createAuditTopic(memo: string): Promise<string> {
+    const resp = await new TopicCreateTransaction()
+      .setTopicMemo(memo.slice(0, 100))
+      .setSubmitKey(this.key.publicKey)
+      .execute(this.client());
+    const receipt = await resp.getReceipt(this.client());
+    if (!receipt.topicId) throw new Error("Topic creation returned no topic id");
+    return receipt.topicId.toString();
+  }
+
+  /** Sign and submit one HCS message as the agent. */
+  async submitTopicMessage(topicId: string, message: string): Promise<AuditReceipt> {
+    const resp = await new TopicMessageSubmitTransaction()
+      .setTopicId(TopicId.fromString(topicId))
+      .setMessage(message)
+      .execute(this.client());
+    const receipt = await resp.getReceipt(this.client());
+    return {
+      topicId,
+      sequenceNumber: receipt.topicSequenceNumber?.toString() ?? "unknown",
+      transactionId: resp.transactionId.toString(),
+    };
+  }
+
+  close() {
+    this.hcsClient?.close();
+    this.hcsClient = null;
+  }
 
   /** Public account id is safe to expose; the key is not. */
   get agentAccountId(): string {

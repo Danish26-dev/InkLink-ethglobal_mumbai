@@ -23,6 +23,7 @@ import { PaymentAgent, PaymentError } from "./payment-agent.js";
 import { deliverCallback } from "./settlement.js";
 import { SigningService } from "./signing/signing-service.js";
 import { enablePersistence } from "./store.js";
+import { HcsAuditPublisher, hashscanTopicUrl } from "./hcs-audit.js";
 import { X402Client } from "./x402-client.js";
 
 function errorBody(code: string, message: string) {
@@ -73,7 +74,16 @@ function main() {
   );
 
   const signing = new SigningService();
+  const audit = serviceConfig.auditTopicId
+    ? new HcsAuditPublisher(serviceConfig.auditTopicId, (topic, msg) => signing.submitTopicMessage(topic, msg))
+    : undefined;
+  console.log(
+    audit
+      ? `[payment-agent] HCS spend audit log -> ${hashscanTopicUrl(audit.topicId)}`
+      : "[payment-agent] HCS spend audit log off (set HCS_AUDIT_TOPIC_ID to enable)",
+  );
   const agent = new PaymentAgent(new X402Client(signing), {
+    audit,
     allowedResourceOrigins: security.allowedResourceOrigins,
     payerAccountId: signing.agentAccountId,
     deliver: (event) =>
@@ -165,7 +175,8 @@ function main() {
       .then((s) =>
         console.log(
           `[payment-agent] recovery: ${s.reverified} re-verified, ` +
-            `${s.outcomeUnknown} outcome-unknown (spend kept), ${s.callbacksResent} callbacks re-sent`,
+            `${s.outcomeUnknown} outcome-unknown (spend kept), ${s.callbacksResent} callbacks re-sent, ` +
+            `${s.auditsRetried} audit entries retried`,
         ),
       )
       .catch((err) =>

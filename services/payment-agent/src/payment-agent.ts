@@ -43,6 +43,7 @@ import {
   type DeliveryResult,
 } from "./settlement.js";
 import { X402Client } from "./x402-client.js";
+import { buildSpendAuditMessage, type AuditPublisher } from "./hcs-audit.js";
 
 const SETTLEMENT_ASSET = "USDC";
 
@@ -56,6 +57,8 @@ export interface AgentOptions {
   agentId?: string;
   /** Mirror-node verification retry policy. Defaults suit real ingestion lag; tests shorten it. */
   verification?: { attempts: number; delayMs: number };
+  /** Optional HCS spend audit log. Runs after settlement; never affects the payment. */
+  audit?: AuditPublisher;
 }
 
 export interface RecoverySummary {
@@ -65,6 +68,8 @@ export interface RecoverySummary {
   outcomeUnknown: number;
   /** Settled payments whose callback had not been delivered and was sent again. */
   callbacksResent: number;
+  /** Settled payments whose HCS audit entry had not been published and was retried. */
+  auditsRetried: number;
 }
 
 /** Mirror consensus timestamp "secs.nanos" -> ISO-8601. */
@@ -368,10 +373,47 @@ export class PaymentAgent {
       settlementTimestamp: settledAt,
       callbackStatus: "pending",
       event, // kept so the callback can be re-sent after a restart
+      ...(this.opts.audit ? { auditStatus: "pending" as const, auditTopicId: this.opts.audit.topicId } : {}),
     });
 
     // Background: retries with backoff must never block or undo the settlement.
     void this.sendCallback(record.paymentId, event);
+    if (this.opts.audit) void this.publishAudit(record.paymentId);
+  }
+
+  /**
+   * Append the settlement to the HCS spend audit log. Best effort and idempotent per
+   * payment: an already published entry is never sent again. If the process dies after HCS
+   * accepted a message but before this was saved, a retry can append a duplicate entry;
+   * readers de-duplicate by paymentId.
+   */
+  private async publishAudit(paymentId: string) {
+    const audit = this.opts.audit;
+    const rec = paymentStore.get(paymentId);
+    if (!audit || !rec || rec.status !== "settled" || !rec.event || rec.auditStatus === "published") return;
+    const policy = authStore.get(rec.authorizationId);
+    try {
+      const receipt = await audit.publish(
+        buildSpendAuditMessage(rec.event, {
+          agentId: this.agentId,
+          merchantId: rec.merchantId,
+          authorizationId: rec.authorizationId,
+          budget: {
+            maxPerTransaction: policy?.maxPerTransaction ?? "unknown",
+            totalSpendingLimit: policy?.totalSpendingLimit ?? "unknown",
+            spentToDate: policy?.spentToDate ?? "unknown",
+          },
+        }),
+      );
+      paymentStore.update(paymentId, {
+        auditStatus: "published",
+        auditTopicId: receipt.topicId,
+        auditSequenceNumber: receipt.sequenceNumber,
+      });
+    } catch (err) {
+      console.warn(`[audit ${paymentId}] HCS publish failed: ${err instanceof Error ? err.message : String(err)}`);
+      paymentStore.update(paymentId, { auditStatus: "failed" });
+    }
   }
 
   /**
@@ -383,7 +425,7 @@ export class PaymentAgent {
    *  - settled but callback undelivered -> send the stored callback again
    */
   async recover(): Promise<RecoverySummary> {
-    const summary: RecoverySummary = { reverified: 0, outcomeUnknown: 0, callbacksResent: 0 };
+    const summary: RecoverySummary = { reverified: 0, outcomeUnknown: 0, callbacksResent: 0, auditsRetried: 0 };
     const work: Promise<unknown>[] = [];
 
     for (const rec of paymentStore.list()) {
@@ -405,6 +447,10 @@ export class PaymentAgent {
       } else if (rec.status === "settled" && rec.callbackStatus !== "delivered" && rec.event) {
         summary.callbacksResent++;
         work.push(this.sendCallback(rec.paymentId, rec.event));
+      }
+      if (this.opts.audit && rec.status === "settled" && rec.event && rec.auditStatus !== "published") {
+        summary.auditsRetried++;
+        work.push(this.publishAudit(rec.paymentId));
       }
     }
 

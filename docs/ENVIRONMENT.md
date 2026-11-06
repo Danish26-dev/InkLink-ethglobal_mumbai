@@ -39,6 +39,7 @@ The services refuse to start without them. Values must match across services:
 | `FACILITATOR_URL` | Blocky402: `https://api.testnet.blocky402.com`. No fallback. |
 | `BACKEND_EVENT_URL` | Callback target (default `http://localhost:8000/api/v1/internal/payment-settled`) |
 | `CALLBACK_MAX_ATTEMPTS` | Retry budget (default 8) |
+| `HCS_AUDIT_TOPIC_ID` | Optional HCS topic for the agent's spend audit log. Create once with `npm run setup:audit-topic` (submit key = agent key, no admin key). Unset = off |
 | `AGENT_STATE_FILE` | Durable state file (default `.data/agent-state.json`). Keep it out of git and out of OneDrive/Dropbox. |
 | `HTS_USDC_TOKEN_ID` / `HTS_USDC_DECIMALS` | Default testnet USDC `0.0.429274` / 6 |
 | `REQUIREMENTS_URL_TEMPLATE`, `BACKEND_API_TOKEN` | Gate pricing from the backend. Unset = **DEV fixed price** |
