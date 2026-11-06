@@ -61,6 +61,8 @@ export interface JobView {
     size: number;
     /** True once the Document Engine produced an edited version. */
     edited: boolean;
+    /** Real page count (PDF parsed, DOCX app.xml); null when unknown. */
+    pageCount: number | null;
     reviewRecommended: boolean;
     notes: string[];
   } | null;
@@ -70,6 +72,12 @@ export interface JobView {
   quote: Quote | null;
   customerApprovedQuote: boolean;
   shopApproved: boolean;
+  /** The operator called request_print_execution for the current configuration. */
+  executionRequested: boolean;
+  /** A print-operator run is in progress for this job. */
+  runActive: boolean;
+  /** Last printer-adapter submission result; `ok` means the spooler accepted it (not printed). */
+  submission: { ok: boolean; state: string | null; message: string | null; submissionId?: string | null } | null;
   createdAt: IsoTimestamp;
   updatedAt: IsoTimestamp;
 }
@@ -111,7 +119,8 @@ export interface ShopOverview {
     trustMode: string | null;
     reason: string | null;
   };
-  printerAdapter: { reachable: boolean; printers: PrinterSummary[]; error: string | null };
+  printerAdapter: { reachable: boolean; printers: PrinterSummary[]; defaultPrinter?: string | null; error: string | null };
+  payments: { configured: boolean };
   stats: {
     activeJobs: number;
     awaitingApproval: number;

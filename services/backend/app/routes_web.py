@@ -289,7 +289,9 @@ async def job_events(
                 try:
                     e = await asyncio.wait_for(queue.get(), timeout=15.0)
                 except asyncio.TimeoutError:
-                    yield ": keep-alive\n\n"
+                    # Named, data-carrying heartbeat (not a comment) so browsers can
+                    # detect a silently dead connection, e.g. behind a proxy.
+                    yield f"event: heartbeat\ndata: {json.dumps({'ts': time.time()})}\n\n"
                     continue
                 if e["seq"] <= sent:
                     continue
