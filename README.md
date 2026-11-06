@@ -214,11 +214,13 @@ USDC amount, to this shop, valid 30 minutes. It is **not a payment** until it se
 
 Code: `packages/shared-schemas/src/offline-pay.ts`, `apps/mobile/app/offline-pay.tsx`,
 `services/payment-agent/src/offline-settlement.ts`, backend `services/backend/app/offline_pay.py`.
-**Proven live on the cloud:** a device-signed voucher for 0.024 USDC was accepted by the backend,
-settled through the agent and verified on Hedera —
-[`0.0.7162784@1794005690.930989293`](https://hashscan.io/testnet/transaction/0.0.7162784-1794005690-930989293)
-(voucher payment `offpay_3a836e38e098d2220ea48a68`, HCS entry #8). Resending the identical voucher
-returned `duplicate` with no second payment.
+**Proven from the phone:** "Pay later (OfflinePay)" in the app signed a voucher for 0.024 USDC;
+the backend accepted it and the agent settled it on Hedera —
+[`0.0.7162784@1794008511.539597966`](https://hashscan.io/testnet/transaction/0.0.7162784-1794008511-539597966)
+(voucher payment `offpay_7a06b5a73ce716ea534b02c0`, HCS entry #10). An earlier headless run proved
+the same path and that resending the identical voucher returns `duplicate` with no second payment
+([`0.0.7162784@1794005690.930989293`](https://hashscan.io/testnet/transaction/0.0.7162784-1794005690-930989293),
+HCS entry #8).
 
 ### Built on Hedera's x402 standard
 
