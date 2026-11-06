@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 from typing import Any
 
-from . import chain, zerog
+from . import chain, offline_pay, zerog
 from .clients import agent_health
 from .config import get_settings
 from .jobs import quote_contract
@@ -45,6 +45,7 @@ def job_view(job: JobRecord) -> dict[str, Any]:
         "quote": quote_contract(quote) if quote else None,
         "customerApprovedQuote": job.customer_approved_quote,
         "payment": payment_view(job),
+        "offlinePayment": offline_pay.job_offline_view(job.job_id),
         # 0G Galileo audit records for this job: hashes and real receipts only.
         "chain": None if get_store().is_demo_shop(job.shop_id) else chain.chain_view(job.job_id),
         "shopApproved": job.shop_approved,

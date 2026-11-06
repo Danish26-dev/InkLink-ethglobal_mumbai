@@ -212,6 +212,8 @@ class Store:
         # Pending on-chain records (0G Galileo); sent only once contracts are configured.
         self.chain_outbox: list[dict[str, Any]] = []
         self.upload_keys: dict[str, dict[str, Any]] = {}
+        # OfflinePay vouchers by voucherId (persisted: used ids and outstanding debt must survive restarts).
+        self.offline_vouchers: dict[str, dict[str, Any]] = {}
         self.consumed_tickets: dict[str, float] = {}
         # Pairing challenges already answered -> expiry (not persisted; single instance).
         self.used_pairing_challenges: dict[str, float] = {}
@@ -256,6 +258,7 @@ class Store:
         self.devices = raw.get("devices", {})
         self.chain_outbox = raw.get("chain_outbox", [])
         self.upload_keys = raw.get("upload_keys", {})
+        self.offline_vouchers = raw.get("offline_vouchers", {})
         # A run cannot survive a restart; never leave a job looking busy.
         for job in self.jobs.values():
             job.run_active = False
@@ -308,6 +311,7 @@ class Store:
                 "devices": self.devices,
                 "chain_outbox": self.chain_outbox[-500:],
                 "upload_keys": self.upload_keys,
+                "offline_vouchers": self.offline_vouchers,
             }
             self.path.parent.mkdir(parents=True, exist_ok=True)
             tmp = self.path.with_suffix(".tmp")

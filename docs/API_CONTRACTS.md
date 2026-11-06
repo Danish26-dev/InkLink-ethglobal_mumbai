@@ -270,7 +270,7 @@ implemented exactly as written; unifying them later would be a contract change.
 
 Status: core implemented and tested (`packages/shared-schemas/src/offline-pay.ts`, app signer
 `apps/mobile/src/crypto/offline-pay.ts`) and the agent settle endpoint (below) are built and
-tested. The backend endpoint `POST /api/v1/offline-payments` is agreed but not built yet.
+tested. The backend endpoint `POST /api/v1/offline-payments` is built and tested (`services/backend/app/offline_pay.py`, below); it has not run against the live payment agent yet.
 
 An offline voucher is the customer's device-signed promise to pay one job's backend-quoted USDC
 amount when the shop has no internet. It is **not a payment**. It becomes `SETTLED` only after the
@@ -322,6 +322,33 @@ TypeScript (noble and node:crypto) and Python (`cryptography`):
 signed text: {"amount":"0.10","asset":"USDC","customerReference":"dev__RckOFqgx1tk-3jNYC-h2Z","devicePublicKey":"_RckOFqgx1tk-3jNYC-h2ZH96_drE8WO1wLqyDXp9hg","expiresAt":"2026-11-06T10:30:00.000Z","issuedAt":"2026-11-06T10:00:00.000Z","jobId":"job_vector","merchantId":"shop_001","quoteId":"quote_vector","type":"inklink_offline_payment","version":"1.0","voucherId":"AQEBAQEBAQEBAQEBAQEBAQ"}
 signature:   cUvdzz9y-8K1IT0U4b89ZzSvasw9bLeTjooCpszEbDF6I3x6yHJI9J7-CP5FgsFpUQ1kE1moD6xG8qV0iDl-AQ
 ```
+
+### Backend endpoint: `POST /api/v1/offline-payments` (built)
+
+Paired-app session (`Authorization: Bearer <native session>`). Body `{ "voucher": { ...signed voucher... } }`.
+Response `200`: `{ voucher (no signature), state, acceptedAt, updatedAt, settlementAttempts, paymentId?, failureReason?,
+duplicate, settlement, jobId }`. `settlement` is `started` | `retry_later` | `refused` | `in_progress` | `not_payable`.
+
+The backend, in this order:
+
+1. Finds the job (404 unless this app created or claimed it) and its **current** quote: `voucher.quoteId` must be that quote
+   and `voucher.amount` must equal the quote's USDC settlement amount **exactly as a string** (else 400 `AMOUNT_INVALID`). The
+   quote must be unexpired (410 `QUOTE_EXPIRED`), the job `awaiting_payment` with no payment in progress (409).
+2. If the session proved a device key when pairing, the voucher must be signed by that key (403 `SIGNATURE_INVALID`).
+   This is checked before anything is recorded.
+3. Runs the ledger rules above (merchant = the job's shop). Errors: `400 INVALID_VOUCHER | AMOUNT_INVALID | EXPIRED |
+   NOT_YET_VALID | VALIDITY_TOO_LONG`, `403 SIGNATURE_INVALID | WRONG_MERCHANT | OVER_VOUCHER_LIMIT | OVER_OUTSTANDING_LIMIT`,
+   `409 REPLAYED | DUPLICATE_JOB`. The signed promise counts as the customer's approval of the quote.
+4. Calls the agent's `settle` with a new `paymentId` = `offpay_` + 24 hex, `settlementAmount` = the quote amount and
+   `resourceUrl` = `<GATE_URL>/api/v1/jobs/{jobId}/execute`. The job goes to payment `processing` and stays `awaiting_payment`.
+   Agent unreachable or 5xx: the voucher stays `AUTHORIZED_OFFLINE` and a background task retries every 30 s. A definitive
+   refusal (4xx) is recorded and not retried. `VOUCHER_SETTLEMENT_IN_PROGRESS` leaves the voucher `PENDING_SETTLEMENT`.
+5. The voucher becomes `SETTLED` **only** from the HMAC-verified settlement callback (verified Hedera tx id, same job, exact
+   amount). A payment that fails or expires moves it to `SETTLEMENT_FAILED`; the retry task then uses a **new** `paymentId`
+   (3 attempts). Failed vouchers still count toward the device's unsettled limit.
+
+`GET /api/v1/offline-payments/{voucherId}` returns the backend's ledger record (404 `UNKNOWN_VOUCHER`). The job view carries
+it as `offlinePayment`. The ledger is persisted in `state.json` with the rest of the backend state.
 
 ### Agent endpoint: `POST /api/v1/offline-payments/settle` (agreed, built)
 

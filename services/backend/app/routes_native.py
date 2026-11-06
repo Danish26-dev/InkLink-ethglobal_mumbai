@@ -11,7 +11,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel
 
-from . import chain, events
+from . import chain, events, offline_pay
 from .auth import api_error, issue_session, job_for, native_principal, require_service_token
 from .clients import ServiceError, call_payment_agent, validate_print_config
 from .config import get_settings
@@ -214,6 +214,7 @@ async def refresh_payment_from_agent(payment_id: str) -> str | None:
             job.payment_status = rec.status
             store.touch(job)
         store.save()
+    offline_pay.on_payment_ended(payment_id, rec.status)
     if job:
         events.publish(job.job_id, "payment_status_updated", {"paymentId": payment_id, "status": rec.status, "transactionId": None,
                                                               "hashscanUrl": None, **_payment_facts(rec.amount_usdc)}, source="payment")
@@ -330,6 +331,7 @@ async def payment_settled(request: Request) -> dict[str, Any]:
                        source="payment")
         events.publish_job_status(job)
         # Queued only now, after the signed settlement was verified. Reference by hash only.
+        offline_pay.on_payment_settled(rec)   # an OfflinePay voucher becomes SETTLED only here
         chain.queue("payment_verified", job.job_id, {"hederaTxCommitment": chain.commitment(tx), "network": "hedera:testnet"})
         if not job.shop_approved:
             events.publish(job.job_id, "approval_required", {"kind": "shop", "reason": "Payment verified; the shop must approve printing."})

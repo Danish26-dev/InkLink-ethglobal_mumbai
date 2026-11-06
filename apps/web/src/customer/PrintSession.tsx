@@ -501,6 +501,8 @@ function PaymentStatusCard({ job }: { job: JobView }) {
         <dt className="text-graphite">Method</dt><dd>Hedera x402 (HTS-USDC)</dd>
         <dt className="text-graphite">Network</dt><dd>Hedera Testnet</dd>
         <dt className="text-graphite">Status</dt><dd className="font-mono">{p?.status ?? job.paymentStatus}</dd>
+        {job.offlinePayment && (<><dt className="text-graphite">Offline promise</dt>
+          <dd className="font-mono">{job.offlinePayment.state}{job.offlinePayment.state !== 'SETTLED' ? ' · a promise, not a payment' : ''}</dd></>)}
         <dt className="text-graphite">Transaction</dt>
         <dd className="break-all font-mono">{p?.transactionId && p.hashscanUrl
           ? <a href={p.hashscanUrl} target="_blank" rel="noreferrer" className="text-signal underline">{p.transactionId}</a>

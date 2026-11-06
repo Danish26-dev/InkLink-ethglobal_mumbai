@@ -82,6 +82,8 @@ export interface JobView {
   customerApprovedQuote: boolean;
   /** The job's current payment, from backend records. Null before a payment starts. */
   payment: JobPayment | null;
+  /** OfflinePay voucher covering this job, if the customer paid by signed offline promise. */
+  offlinePayment: JobOfflinePayment | null;
   /** 0G Galileo InklinkRegistry audit records (hashes only). Null for demo-shop jobs. */
   chain: JobChain | null;
   shopApproved: boolean;
@@ -121,6 +123,22 @@ export interface JobPayment {
   hashscanUrl: string | null;
   settledAt: IsoTimestamp | null;
   verifiedAt: IsoTimestamp | null;
+}
+
+/**
+ * OfflinePay voucher state as recorded by the backend. A voucher is a signed PROMISE; it is
+ * "SETTLED" only after a mirror-node-verified Hedera settlement reconciled it.
+ */
+export interface JobOfflinePayment {
+  voucherId: string;
+  state: "AUTHORIZED_OFFLINE" | "PENDING_SETTLEMENT" | "SETTLED" | "SETTLEMENT_FAILED";
+  acceptedAt: IsoTimestamp;
+  updatedAt: IsoTimestamp;
+  settlementAttempts: number;
+  paymentId?: string;
+  transactionId?: string;
+  verifiedAt?: IsoTimestamp;
+  failureReason?: string;
 }
 
 /** One lifecycle fact for the 0G Galileo registry. `txHash`/`blockNumber` only from a real receipt. */
