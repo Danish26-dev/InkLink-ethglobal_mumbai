@@ -166,9 +166,62 @@ async def initiate_payment(body: PaymentIn, principal: Principal = Depends(nativ
         job.payment_status = "processing"
         store.touch(job)
         store.save()
-    events.publish(job.job_id, "payment_status_updated", {"paymentId": pid, "status": "processing", "transactionId": None, "hashscanUrl": None}, source="payment")
+    events.publish(job.job_id, "payment_status_updated", {"paymentId": pid, "status": "processing", "transactionId": None,
+                                                          "hashscanUrl": None, **_payment_facts(q.usdc)}, source="payment")
     events.publish_job_status(job)
     return payload
+
+
+def _payment_facts(amount: str | None) -> dict[str, Any]:
+    """Backend-authoritative quote facts carried on every payment event (never a proof of payment)."""
+    return {"amount": amount, "asset": "HTS_USDC", "network": "hedera:testnet"}
+
+
+async def refresh_payment_from_agent(payment_id: str) -> str | None:
+    """Ask the payment agent about a `processing` payment and record a FAILURE or EXPIRY.
+
+    `settled` is never taken from here: it only comes from the HMAC-signed callback after
+    the agent's mirror-node verification. Returns the new status if it changed."""
+    store = get_store()
+    rec = store.payments.get(payment_id)
+    if not rec or rec.status != "processing" or not get_settings().payments_configured:
+        return None
+    try:
+        status, payload = await call_payment_agent("GET", f"/api/v1/payments/{payment_id}")
+    except ServiceError:
+        return None
+    if status != 200 or not isinstance(payload, dict) or payload.get("status") not in ("failed", "expired"):
+        return None
+    job = store.jobs.get(rec.job_id)
+    with store.lock:
+        if rec.status != "processing":  # the signed callback won the race
+            return None
+        rec.status = payload["status"]
+        if job:
+            job.payment_status = rec.status
+            store.touch(job)
+        store.save()
+    if job:
+        events.publish(job.job_id, "payment_status_updated", {"paymentId": payment_id, "status": rec.status, "transactionId": None,
+                                                              "hashscanUrl": None, **_payment_facts(rec.amount_usdc)}, source="payment")
+        events.publish_job_status(job)
+    return rec.status
+
+
+PAYMENT_RECONCILE_SECONDS = 15.0
+
+
+async def payment_reconcile_loop() -> None:
+    """Failures and expiries reach the shop display even when no app is polling."""
+    import asyncio
+
+    while True:
+        await asyncio.sleep(PAYMENT_RECONCILE_SECONDS)
+        for pid in [p.payment_id for p in list(get_store().payments.values()) if p.status == "processing"]:
+            try:
+                await refresh_payment_from_agent(pid)
+            except Exception:  # noqa: BLE001 - a bad record must not stop the loop
+                pass
 
 
 # ───────────── Contract 7: payment status (what THIS backend verified) ─────────────
@@ -180,20 +233,8 @@ async def payment_status(payment_id: str, principal: Principal = Depends(native_
     if not rec:
         raise api_error(404, "JOB_NOT_FOUND", "Unknown paymentId.")
     job = job_for(principal, rec.job_id)
-    if rec.status == "processing" and get_settings().payments_configured:
-        # Learn about FAILURES from the agent; `settled` only comes from the signed callback.
-        try:
-            status, payload = await call_payment_agent("GET", f"/api/v1/payments/{payment_id}")
-            if status == 200 and isinstance(payload, dict) and payload.get("status") in ("failed", "expired"):
-                with store.lock:
-                    rec.status = payload["status"]
-                    job.payment_status = rec.status
-                    store.touch(job)
-                    store.save()
-                events.publish(job.job_id, "payment_status_updated", {"paymentId": payment_id, "status": rec.status, "transactionId": None, "hashscanUrl": None}, source="payment")
-                events.publish_job_status(job)
-        except ServiceError:
-            pass
+    # Learn about FAILURES from the agent; `settled` only comes from the signed callback.
+    await refresh_payment_from_agent(payment_id)
     return {
         "paymentId": rec.payment_id,
         "jobId": rec.job_id,
@@ -262,7 +303,7 @@ async def payment_settled(request: Request) -> dict[str, Any]:
         # Only verified values: the callback was HMAC-checked and every field matched above.
         events.publish(job.job_id, "payment_status_updated",
                        {"paymentId": rec.payment_id, "status": "settled", "transactionId": tx, "hashscanUrl": rec.hashscan_url,
-                        "network": "hedera:testnet", "amount": rec.amount_usdc, "asset": "HTS_USDC",
+                        **_payment_facts(rec.amount_usdc),
                         # settledAt: consensus time the agent verified on the mirror node;
                         # verifiedAt: when this backend verified the signed callback.
                         "settledAt": e.get("settlementTimestamp") if isinstance(e.get("settlementTimestamp"), str) else None,
