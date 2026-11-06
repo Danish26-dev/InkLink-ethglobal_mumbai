@@ -16,6 +16,16 @@ const COLUMNS: { title: string; links: L[] }[] = [
     ],
   },
   {
+    title: 'Use Inklink',
+    links: [
+      { label: 'Print a document', href: LINKS.app },
+      { label: 'Track an order', href: `${LINKS.app}/jobs` },
+      { label: 'Shop dashboard', href: LINKS.shop },
+      { label: 'Agent Workspace', href: LINKS.agent },
+      { label: 'Judge walkthrough', href: LINKS.demo },
+    ],
+  },
+  {
     title: 'Infrastructure',
     links: [
       { label: '0G Private Computer', section: 'technology' },
@@ -48,7 +58,7 @@ export default function Footer() {
               through intelligent agents, privacy-preserving computation and autonomous payments.
             </p>
           </div>
-          <div className="grid grid-cols-2 gap-8 sm:grid-cols-3 lg:col-span-7">
+          <div className="grid grid-cols-2 gap-8 sm:grid-cols-4 lg:col-span-7">
             {COLUMNS.map((col) => (
               <div key={col.title}>
                 <h3 className="eyebrow !text-paper/50">{col.title}</h3>
@@ -60,7 +70,8 @@ export default function Footer() {
                           {l.label}
                         </button>
                       ) : l.href ? (
-                        <a href={l.href} target="_blank" rel="noopener noreferrer" className="text-sm text-paper/75 transition-colors hover:text-paper">
+                        <a href={l.href} {...(l.href.startsWith('/') ? {} : { target: '_blank', rel: 'noopener noreferrer' })}
+                          className="text-sm text-paper/75 transition-colors hover:text-paper">
                           {l.label}
                         </a>
                       ) : (
@@ -78,11 +89,12 @@ export default function Footer() {
         <div className="mt-16 flex flex-col items-start justify-between gap-4 border-t border-paper/10 pt-7 text-sm text-paper/50 sm:flex-row sm:items-center">
           <span>© {new Date().getFullYear()} INKLINK. In active development.</span>
           <div className="flex gap-6">
-            {['Privacy', 'Terms', 'Status'].map((t) => (
+            {['Privacy', 'Terms'].map((t) => (
               <span key={t} className="text-paper/40">
                 {t} <span className="font-mono text-[10px] uppercase tracking-wider">· soon</span>
               </span>
             ))}
+            <a href={LINKS.demo} className="text-paper/60 transition-colors hover:text-paper">Status</a>
           </div>
         </div>
       </div>

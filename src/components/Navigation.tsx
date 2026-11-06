@@ -3,6 +3,7 @@ import { Menu, X, ArrowUpRight } from 'lucide-react';
 import Logo from './Logo';
 import { launchInklink } from './LaunchDialog';
 import { scrollToSection } from '../lib/chapter';
+import { LINKS } from '../lib/config';
 
 const NAV_LINKS = [
   { id: 'workshop', label: 'Platform', match: ['workshop'] },
@@ -66,12 +67,12 @@ export default function Navigation({ activeId, scrolled }: { activeId: string; s
         </ul>
 
         <div className="hidden items-center gap-4 md:flex">
-          <button
-            onClick={() => go('workflow')}
+          <a
+            href={LINKS.app}
             className={`text-sm font-medium transition-colors ${dark ? 'text-paper/80 hover:text-paper' : 'text-ink/80 hover:text-ink'}`}
           >
             Explore App
-          </button>
+          </a>
           <button onClick={launchInklink} className="btn-primary !px-5 !py-2.5">
             Launch Inklink <ArrowUpRight size={16} />
           </button>
@@ -107,9 +108,9 @@ export default function Navigation({ activeId, scrolled }: { activeId: string; s
             ))}
           </ul>
           <div className="mt-8 flex flex-col gap-3">
-            <button onClick={() => go('workflow')} className="btn-secondary w-full">
+            <a href={LINKS.app} className="btn-secondary w-full">
               Explore App
-            </button>
+            </a>
             <button
               onClick={() => {
                 setOpen(false);

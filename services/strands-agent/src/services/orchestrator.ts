@@ -21,8 +21,8 @@
  * prompt are framework-neutral and can be re-hosted in ADK.
  */
 import { Agent } from '@strands-agents/sdk';
-import type { GoogleModel } from '@strands-agents/sdk/models/google';
-import { buildVertexModel } from '../model/vertexProvider.js';
+import type { Model } from '@strands-agents/sdk';
+import { buildModel as buildSelectedModel } from '../model/providers.js';
 import { buildTools, type DocumentContext } from '../tools/documentTools.js';
 import { toAgentError } from '../errors.js';
 import type { AgentEditResult } from '../types.js';
@@ -109,11 +109,11 @@ export interface EditRequest {
 }
 
 export class PlanningOrchestrator {
-  private buildModel(): GoogleModel {
-    // Vertex AI via ADC. buildVertexModel() validates GOOGLE_CLOUD_PROJECT /
-    // GOOGLE_CLOUD_LOCATION / VERTEX_AI_MODEL_ID (throws a clear, secret-free
-    // error otherwise). Credentials come from ADC and are never read here.
-    return buildVertexModel();
+  private buildModel(): Model {
+    // The explicitly selected provider (INKLINK_MODEL_PROVIDER, default
+    // 0G Private Computer). Throws ModelUnavailableError when it is not
+    // configured; there is no silent fallback to another provider.
+    return buildSelectedModel();
   }
 
   async runEdit(req: EditRequest): Promise<AgentEditResult> {
