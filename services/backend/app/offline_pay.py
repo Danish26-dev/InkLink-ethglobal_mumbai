@@ -339,7 +339,10 @@ async def settle(record: dict[str, Any]) -> str:
             return "started"
         _drop_payment(payment_id)
         if code == "VOUCHER_SETTLEMENT_IN_PROGRESS":
-            return "in_progress"      # funds may have moved: only mirror-node re-verification resolves it
+            # Funds may have moved: only the agent's mirror-node re-verification resolves it. Back to
+            # pending under the ORIGINAL payment, so nothing (no retry, re-quote or second payment) runs.
+            _restore_unresolved(record, job)
+            return "in_progress"
         if status >= 500 or code in ("PAYMENT_ID_CONFLICT", "FACILITATOR_UNAVAILABLE"):
             _touch(record, lastError=(err.get("message") or f"agent returned {status}")[:200])
             return "retry_later"
@@ -348,6 +351,62 @@ async def settle(record: dict[str, Any]) -> str:
         return "refused"
     finally:
         _settling.discard(vid)
+
+
+def _restore_unresolved(record: dict[str, Any], job: Any) -> None:
+    """The agent refuses a retry because the earlier attempt may have moved funds. Show it as what it
+    is (settling, outcome not yet known) instead of 'failed', and stop retrying."""
+    original = record.get("paymentId")
+    if not original:
+        return
+    store = get_store()
+    with store.lock:
+        p = store.payments.get(original)
+        if p and p.status in ("failed", "expired"):
+            p.status = "processing"
+        job.payment_id = original
+        job.payment_status = "processing"
+        store.touch(job)
+        store.save()
+    _touch(record, state="PENDING_SETTLEMENT", unresolved=True,
+           failureReason="Settlement outcome unresolved: funds may have moved; waiting for mirror-node verification.")
+    events.publish(job.job_id, "payment_status_updated",
+                   {"paymentId": original, "status": "processing", "transactionId": None, "hashscanUrl": None,
+                    "amount": record["voucher"]["amount"], "asset": "HTS_USDC", "network": "hedera:testnet"}, source="payment")
+    events.publish_job_status(job)
+
+
+def is_unresolved(payment_id: str) -> bool:
+    """True while the agent has not resolved a possibly-moved settlement for this payment."""
+    record = _voucher_for_payment(payment_id)
+    return bool(record and record.get("unresolved"))
+
+
+async def check_unresolved(record: dict[str, Any]) -> None:
+    """Ask the agent's voucher ledger. SETTLED arrives as the usual signed callback (the agent resends
+    it); a definitive SETTLEMENT_FAILED means no funds moved, so the voucher may be retried."""
+    try:
+        status, payload = await call_payment_agent("GET", f"/api/v1/offline-payments/{record['voucher']['voucherId']}")
+    except ServiceError:
+        return
+    if status != 200 or not isinstance(payload, dict) or payload.get("state") != "SETTLEMENT_FAILED":
+        return
+    store = get_store()
+    payment_id = record.get("paymentId")
+    job = store.jobs.get(record["voucher"]["jobId"])
+    with store.lock:
+        if (p := store.payments.get(payment_id or "")) and p.status == "processing":
+            p.status = "failed"
+        if job:
+            job.payment_status = "failed"
+            store.touch(job)
+        store.save()
+    _touch(record, state="SETTLEMENT_FAILED", unresolved=None, failureReason="agent: settlement failed, no funds moved")
+    if job:
+        events.publish(job.job_id, "payment_status_updated",
+                       {"paymentId": payment_id, "status": "failed", "transactionId": None, "hashscanUrl": None,
+                        "amount": record["voucher"]["amount"], "asset": "HTS_USDC", "network": "hedera:testnet"}, source="payment")
+        events.publish_job_status(job)
 
 
 def _drop_payment(payment_id: str) -> None:
@@ -362,6 +421,9 @@ async def sync_once() -> int:
     """Start settlement for vouchers that still need one. Failed ones retry with a new paymentId."""
     started = 0
     for record in list(get_store().offline_vouchers.values()):
+        if record["state"] == "PENDING_SETTLEMENT" and record.get("unresolved"):
+            await check_unresolved(record)
+            continue
         if record["state"] in ("AUTHORIZED_OFFLINE", "SETTLEMENT_FAILED") and not record.get("blocked") \
                 and record["settlementAttempts"] < MAX_SETTLE_ATTEMPTS:
             started += (await settle(record)) == "started"
@@ -392,6 +454,8 @@ def public_record(record: dict[str, Any]) -> dict[str, Any]:
             out[k] = record[k]
     if record.get("blocked") and record.get("lastError"):
         out["failureReason"] = record["lastError"]
+    if record.get("unresolved"):
+        out["unresolved"] = True
     return out
 
 

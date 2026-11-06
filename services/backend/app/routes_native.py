@@ -199,6 +199,10 @@ async def refresh_payment_from_agent(payment_id: str) -> str | None:
     rec = store.payments.get(payment_id)
     if not rec or rec.status != "processing" or not get_settings().payments_configured:
         return None
+    if offline_pay.is_unresolved(payment_id):
+        # The agent's payment status says "failed" while funds may have moved (an OfflinePay retry was
+        # refused as in progress). Trust only the agent's voucher ledger, via offline_pay.check_unresolved.
+        return None
     try:
         status, payload = await call_payment_agent("GET", f"/api/v1/payments/{payment_id}")
     except ServiceError:

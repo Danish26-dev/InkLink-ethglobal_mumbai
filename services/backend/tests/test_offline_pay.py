@@ -167,11 +167,17 @@ class Agent:
 
     def __init__(self, monkeypatch, *, answer=None, error: ServiceError | None = None):
         self.calls: list[dict] = []
+        self.gets: list[str] = []
+        self.ledger: tuple[int, dict] = (200, {"state": "PENDING_SETTLEMENT"})
         self.answer = answer or (200, {"paymentId": "?", "voucherId": "?", "status": "processing", "voucherState": "PENDING_SETTLEMENT"})
         self.error = error
         monkeypatch.setattr(op, "call_payment_agent", self)
 
     async def __call__(self, method, path, body=None):
+        if method == "GET":                      # the agent's voucher ledger
+            assert path.startswith("/api/v1/offline-payments/")
+            self.gets.append(path)
+            return self.ledger
         assert (method, path) == ("POST", "/api/v1/offline-payments/settle")
         self.calls.append(body)
         if self.error:
@@ -276,6 +282,72 @@ def test_failed_settlement_is_retried_with_a_new_payment_id(client, printer, mon
     assert second != first and second.startswith("offpay_")
     assert settle(client, job_id, second, "0.30", tx=TX).status_code == 200
     assert record["state"] == "SETTLED" and record["settlementAttempts"] == 2
+
+
+def _failed_but_funds_may_have_moved(client, monkeypatch):
+    """Agent reports the payment failed, yet refuses a retry: the earlier attempt may have moved funds."""
+    from app import routes_native
+
+    agent = Agent(monkeypatch)
+    key, hdr, job_id, quote = quoted_native_job(client)
+    voucher = make_voucher(key, job_id, quote["quoteId"], "0.30")
+    client.post("/api/v1/offline-payments", json={"voucher": voucher}, headers=hdr)
+    first = agent.calls[0]["paymentId"]
+
+    async def failed(method, path, body=None):
+        return 200, {"status": "failed"}
+
+    monkeypatch.setattr(routes_native, "call_payment_agent", failed)
+    assert asyncio.run(routes_native.refresh_payment_from_agent(first)) == "failed"
+    agent.answer = (409, {"success": False, "error": {"code": "VOUCHER_SETTLEMENT_IN_PROGRESS", "message": "in progress"}})
+    assert asyncio.run(op.sync_once()) == 0          # the retry is refused by the agent
+    return agent, routes_native, hdr, job_id, voucher, first
+
+
+def test_unresolved_settlement_is_shown_as_settling_not_failed_and_not_retried(client, printer, monkeypatch):  # noqa: F811
+    agent, routes_native, hdr, job_id, voucher, first = _failed_but_funds_may_have_moved(client, monkeypatch)
+    record = get_store().offline_vouchers[voucher["voucherId"]]
+    assert record["state"] == "PENDING_SETTLEMENT" and record["unresolved"] is True and record["paymentId"] == first
+    job = get_store().jobs[job_id]
+    assert job.payment_status == "processing" and job.payment_id == first and get_store().payments[first].status == "processing"
+    view = client.get(f"/api/v1/jobs/{job_id}", headers=hdr).json()
+    assert view["payment"]["verificationStatus"] == "pending" and view["offlinePayment"]["unresolved"] is True
+
+    # No retry loop: later passes only read the agent's voucher ledger and start nothing.
+    calls = len(agent.calls)
+    assert asyncio.run(op.sync_once()) == 0 and asyncio.run(op.sync_once()) == 0
+    assert len(agent.calls) == calls and agent.gets
+
+    # The agent's flaky payment status ("failed") no longer flips it back and forth.
+    async def still_failed(method, path, body=None):
+        return 200, {"status": "failed"}
+
+    monkeypatch.setattr(routes_native, "call_payment_agent", still_failed)
+    assert asyncio.run(routes_native.refresh_payment_from_agent(first)) is None
+    assert get_store().jobs[job_id].payment_status == "processing"
+    # The customer cannot start a second payment for the same job meanwhile.
+    assert client.post(f"/api/v1/jobs/{job_id}/quote", headers=hdr).status_code == 409
+
+    # Once the agent verifies the transfer, the usual signed callback settles it under the original payment.
+    assert settle(client, job_id, first, "0.30", tx=TX).status_code == 200
+    assert get_store().offline_vouchers[voucher["voucherId"]]["state"] == "SETTLED"
+    assert client.get(f"/api/v1/jobs/{job_id}", headers=hdr).json()["payment"]["verificationStatus"] == "verified"
+
+
+def test_unresolved_settlement_that_the_agent_finally_fails_can_be_retried(client, printer, monkeypatch):  # noqa: F811
+    agent, routes_native, hdr, job_id, voucher, first = _failed_but_funds_may_have_moved(client, monkeypatch)
+    agent.ledger = (200, {"state": "SETTLEMENT_FAILED"})        # re-verification found nothing on the mirror node
+    assert asyncio.run(op.sync_once()) == 0
+    record = get_store().offline_vouchers[voucher["voucherId"]]
+    assert record["state"] == "SETTLEMENT_FAILED" and not record.get("unresolved")
+    assert get_store().jobs[job_id].payment_status == "failed"
+
+    agent.answer = (200, {"status": "processing", "voucherState": "PENDING_SETTLEMENT"})
+    assert asyncio.run(op.sync_once()) == 1                       # now a retry with a NEW payment id is allowed
+    second = agent.calls[-1]["paymentId"]
+    assert second != first
+    assert settle(client, job_id, second, "0.30", tx=TX).status_code == 200
+    assert record["state"] == "SETTLED"
 
 
 # ───────────── endpoint guards ─────────────
