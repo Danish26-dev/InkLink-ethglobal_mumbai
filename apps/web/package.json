@@ -1,0 +1,34 @@
+{
+  "name": "inklink-web",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Inklink PWA: customer conversation (no login, no wallet), Agent Workspace and shop dashboard.",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@inklink/shared-schemas": "file:../../packages/shared-schemas",
+    "lucide-react": "0.454.0",
+    "qrcode": "1.5.4",
+    "react": "18.3.1",
+    "react-dom": "18.3.1",
+    "react-router-dom": "6.28.0"
+  },
+  "devDependencies": {
+    "@types/qrcode": "1.5.5",
+    "@types/react": "18.3.11",
+    "@types/react-dom": "18.3.1",
+    "@vitejs/plugin-react": "4.3.3",
+    "autoprefixer": "10.4.20",
+    "postcss": "8.4.47",
+    "tailwindcss": "3.4.14",
+    "typescript": "5.6.3",
+    "vite": "5.4.21",
+    "vitest": "2.1.5"
+  }
+}

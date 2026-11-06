@@ -1,0 +1,87 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: light;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  @apply bg-paper font-sans text-ink antialiased;
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* Visible keyboard focus everywhere (accessibility). */
+:focus-visible {
+  outline: 2px solid #f15a36;
+  outline-offset: 2px;
+}
+
+.label-mono {
+  @apply font-mono text-[11px] uppercase tracking-[0.14em] text-graphite;
+}
+
+.btn {
+  @apply inline-flex items-center justify-center gap-2 rounded-md px-4 py-2 text-sm font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-40;
+}
+.btn-primary {
+  @apply btn bg-ink text-paper hover:bg-black;
+}
+.btn-signal {
+  @apply btn bg-signal text-white hover:brightness-95;
+}
+.btn-ghost {
+  @apply btn border border-light-grey bg-white text-ink hover:border-ink;
+}
+
+.card {
+  @apply rounded-xl border border-light-grey bg-white;
+}
+
+/* Operator cursor: a real pointer glyph that eases between control positions. */
+.operator-cursor {
+  transition: transform 520ms cubic-bezier(0.16, 1, 0.3, 1);
+  will-change: transform;
+}
+.operator-cursor.clicking .cursor-ring {
+  animation: cursor-click 360ms ease-out;
+}
+@keyframes cursor-click {
+  0% {
+    transform: scale(0.4);
+    opacity: 0.9;
+  }
+  100% {
+    transform: scale(1.8);
+    opacity: 0;
+  }
+}
+
+@keyframes pulse-dot {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+.pulse-dot {
+  animation: pulse-dot 1.4s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .operator-cursor {
+    transition-duration: 1ms;
+  }
+  .operator-cursor.clicking .cursor-ring,
+  .pulse-dot {
+    animation: none;
+  }
+}
