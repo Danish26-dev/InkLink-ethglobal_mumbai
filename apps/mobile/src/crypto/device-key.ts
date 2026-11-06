@@ -22,6 +22,8 @@ import {
 import { buildDeviceProof, type DeviceProof } from "../discovery/pairing";
 import { buildSignedAuthorization, type AuthorizationFields } from "./authorization";
 import { publicKeyFor, signMessage } from "./ed25519";
+import { buildOfflineVoucher, type OfflineVoucherFields } from "./offline-pay";
+import type { OfflinePaymentVoucher } from "@inklink/shared-schemas";
 
 const STORAGE_KEY = "inklink.device.ed25519";
 
@@ -74,6 +76,14 @@ export async function signPaymentAuthorization(
   fields: AuthorizationFields,
 ): Promise<AuthorizePaymentRequest> {
   return buildSignedAuthorization(await secretKey(), fields, Crypto.getRandomBytes(16));
+}
+
+/**
+ * Sign an OfflinePay voucher (a promise to pay exactly this job's quoted USDC amount) the
+ * customer has just explicitly approved. Fresh random voucher id; nothing is recorded here.
+ */
+export async function signOfflineVoucher(fields: OfflineVoucherFields): Promise<OfflinePaymentVoucher> {
+  return buildOfflineVoucher(await secretKey(), fields, Crypto.getRandomBytes(16));
 }
 
 /**

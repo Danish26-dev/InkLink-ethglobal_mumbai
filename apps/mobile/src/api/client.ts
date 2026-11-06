@@ -20,10 +20,12 @@ import {
   type InitiatePaymentRequest,
   type InitiatePaymentResponse,
   type JobStatusResponse,
+  type OfflinePaymentVoucher,
   type PaymentStatusResponse,
   type Quote,
   type Shop,
 } from "@inklink/shared-schemas";
+import type { OfflineVoucherView, SubmitOfflineVoucherResponse } from "../offline/offline-pay-flow";
 
 import {
   UploadAbortedError,
@@ -276,5 +278,15 @@ export class InklinkApi {
   // Contract 8 — authoritative status lives on the backend
   getJobStatus(jobId: string): Promise<JobStatusResponse> {
     return this.json<JobStatusResponse>(`/jobs/${jobId}/status`);
+  }
+
+  // OfflinePay — hand the shop a device-signed promise; the backend settles it via x402.
+  // Resending the identical voucher is idempotent (`duplicate: true`).
+  submitOfflineVoucher(voucher: OfflinePaymentVoucher): Promise<SubmitOfflineVoucherResponse> {
+    return this.json<SubmitOfflineVoucherResponse>(`/offline-payments`, { method: "POST", body: JSON.stringify({ voucher }) });
+  }
+
+  getOfflineVoucher(voucherId: string): Promise<OfflineVoucherView> {
+    return this.json<OfflineVoucherView>(`/offline-payments/${encodeURIComponent(voucherId)}`);
   }
 }

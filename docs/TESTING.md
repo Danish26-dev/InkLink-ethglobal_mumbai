@@ -5,8 +5,8 @@ Each module is testable on its own, with no hardware and no funded wallet.
 ## Unit and interop tests
 
 ```bash
-cd services/payment-agent && npm test      # 106 tests
-cd apps/mobile            && npm test      # 74 tests
+cd services/payment-agent && npm test      # 114 tests
+cd apps/mobile            && npm test      # 87 tests
 cd services/mock-gateway  && npm test      # 11 tests
 ```
 

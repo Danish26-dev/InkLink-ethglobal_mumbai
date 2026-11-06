@@ -266,11 +266,17 @@ The settlement asset is written three ways, as in the agreed contracts: `USDC` (
 the policy), `HTS-USDC` (quote `settlement.asset`), `HTS_USDC` (callback/registry). They are
 implemented exactly as written; unifying them later would be a contract change.
 
-## OfflinePay (signed offline authorization) � PROPOSED
+## OfflinePay (signed offline authorization) — BUILT
 
 Status: core implemented and tested (`packages/shared-schemas/src/offline-pay.ts`, app signer
 `apps/mobile/src/crypto/offline-pay.ts`) and the agent settle endpoint (below) are built and
 tested. The backend endpoint `POST /api/v1/offline-payments` is built and tested (`services/backend/app/offline_pay.py`, below); it has not run against the live payment agent yet.
+The app's "Pay later (OfflinePay)" screen (`apps/mobile/app/offline-pay.tsx`) signs the voucher
+with the device key, checks the phone's own limits first, sends it to that endpoint and follows
+`GET /api/v1/offline-payments/{voucherId}` until it is `SETTLED` with a verified transaction.
+The phone records a voucher only once the backend has it (or may have it, after a network
+failure; the identical voucher is then resent), and frees its own limit only on that verified
+settlement.
 
 An offline voucher is the customer's device-signed promise to pay one job's backend-quoted USDC
 amount when the shop has no internet. It is **not a payment**. It becomes `SETTLED` only after the

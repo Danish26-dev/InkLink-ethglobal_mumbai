@@ -7,6 +7,7 @@
 import React, { createContext, useContext, useMemo, useRef, useState } from "react";
 import type {
   CreateJobResponse,
+  OfflinePaymentVoucher,
   PairedShop,
   PrintConfig,
   Quote,
@@ -46,6 +47,8 @@ export interface JobSession {
   paymentId?: string;
   /** The quote `paymentId` pays; Back to the approval screen must not pay it again. */
   paidQuoteId?: string;
+  /** OfflinePay voucher signed for the current quote (kept so it can be resent unchanged). */
+  offlineVoucher?: OfflinePaymentVoucher;
 }
 
 const defaultPrintConfig: PrintConfig = DEFAULT_PRINT_CONFIG;

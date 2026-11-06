@@ -31,6 +31,7 @@ export default function RootLayout() {
           <Stack.Screen name="payment" options={{ title: "Payment" }} />
           <Stack.Screen name="authorize" options={{ title: "Authorize Agent" }} />
           <Stack.Screen name="payment-status" options={{ title: "Payment" }} />
+          <Stack.Screen name="offline-pay" options={{ title: "OfflinePay" }} />
           <Stack.Screen name="tracking" options={{ title: "Print Job" }} />
           <Stack.Screen name="history" options={{ title: "History" }} />
           <Stack.Screen name="settings" options={{ title: "Settings" }} />

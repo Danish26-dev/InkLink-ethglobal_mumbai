@@ -5,6 +5,7 @@ import { useRouter } from "expo-router";
 import { Screen, Heading, Body, Button, Card, MockBanner, Pill } from "@/components/ui";
 import { colors, spacing, type } from "@/theme";
 import { useApp } from "@/state/app-context";
+import { DEFAULT_OFFLINE_PAY_POLICY } from "@inklink/shared-schemas";
 
 function formatRemaining(ms: number): string {
   const s = Math.max(0, Math.floor(ms / 1000));
@@ -27,7 +28,12 @@ export default function Payment() {
   const remaining = quote ? Date.parse(quote.expiresAt) - now : 0;
   const expired = !!quote && remaining <= 0;
   const settlement = quote?.settlement;
-  const canPayWithHedera = !!quote?.paymentMethods.includes("hedera_x402") && !!settlement && !expired;
+  const hederaOffered = !!quote?.paymentMethods.includes("hedera_x402") && !!settlement;
+  // One payment method per quote: once one has started, the other is not offered again.
+  const offlineStarted = !!quote && session.offlineVoucher?.quoteId === quote.quoteId;
+  const x402Started = !!quote && session.paidQuoteId === quote.quoteId;
+  const canPayWithHedera = hederaOffered && !expired && !offlineStarted;
+  const canPayLater = hederaOffered && !expired && !x402Started && !offlineStarted;
 
   async function refreshQuote() {
     if (!session.job) return;
@@ -77,6 +83,20 @@ export default function Payment() {
           USDC on Hedera Testnet. The amount is set by the shop's backend, not by this app.
         </Body>
         <Button label="Use Hedera x402" disabled={!canPayWithHedera} onPress={() => router.push("/authorize")} />
+      </Card>
+
+      <Card>
+        <Heading>Pay later (OfflinePay)</Heading>
+        <Body muted>
+          Sign a promise for exactly this amount. The shop accepts it now and settles it in USDC on
+          Hedera when it is online. Limited to {DEFAULT_OFFLINE_PAY_POLICY.maxPerVoucher} USDC per promise
+          and {DEFAULT_OFFLINE_PAY_POLICY.maxOutstanding} USDC unsettled.
+        </Body>
+        {offlineStarted ? (
+          <Button label="View OfflinePay status" variant="secondary" onPress={() => router.push("/offline-pay")} />
+        ) : (
+          <Button label="Pay later with OfflinePay" variant="secondary" disabled={!canPayLater} onPress={() => router.push("/offline-pay")} />
+        )}
       </Card>
 
       <Card>

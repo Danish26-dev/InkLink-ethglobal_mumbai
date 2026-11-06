@@ -51,6 +51,10 @@ export default function Authorize() {
       return;
     }
     if (inFlight.current || paymentInProgressFor(session, quote.quoteId)) return;
+    if (session.offlineVoucher?.quoteId === quote.quoteId) {
+      setError("You already signed an OfflinePay promise for this quote.");
+      return;
+    }
     if (quoteExpired(quote)) {
       setError("This quote has expired. Go back and get a new quote before paying.");
       return;
