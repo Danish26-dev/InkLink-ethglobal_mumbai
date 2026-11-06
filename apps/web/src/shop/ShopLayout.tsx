@@ -116,6 +116,11 @@ export function ShopLayout() {
           ))}
         </nav>
 
+        <div className="mx-3 flex gap-3 px-3 text-[11px] text-paper/50">
+          <a href="/" className="hover:text-paper">Inklink website</a>
+          <NavLink to="/app" className="hover:text-paper">Customer app</NavLink>
+          <NavLink to="/demo" className="hover:text-paper">Demo</NavLink>
+        </div>
         {shopToken.get() ? (
           <button type="button" className="m-3 flex items-center gap-2 rounded-md px-3 py-2 text-sm text-paper/60 hover:bg-white/5"
             onClick={() => { shopToken.clear(); setAuthed(false); setOverview(null); }}>

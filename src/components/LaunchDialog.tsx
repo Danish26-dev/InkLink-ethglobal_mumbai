@@ -1,17 +1,17 @@
 import { useEffect, useRef, useState } from 'react';
 import { X, ArrowRight } from 'lucide-react';
-import { LINKS } from '../lib/config';
-import { scrollToSection } from '../lib/chapter';
+import { LINKS, openLink } from '../lib/config';
 
 const EVT = 'inklink:launch';
 
-/** Launch Inklink: opens the configured app, or explains its development status. */
+/** Launch Inklink: lets the visitor choose the customer app, shop dashboard or demo. */
 export function launchInklink() {
-  if (LINKS.app) {
-    window.open(LINKS.app, '_blank', 'noopener,noreferrer');
-    return;
-  }
   window.dispatchEvent(new Event(EVT));
+}
+
+/** Open the customer app directly (no login, no wallet). */
+export function openCustomerApp() {
+  openLink(LINKS.app);
 }
 
 export default function LaunchDialog() {
@@ -31,9 +31,9 @@ export default function LaunchDialog() {
     if (!open && d.open) d.close();
   }, [open]);
 
-  const go = (id: string) => {
+  const go = (url: string) => {
     setOpen(false);
-    setTimeout(() => scrollToSection(id), 50);
+    openLink(url);
   };
 
   return (
@@ -56,25 +56,28 @@ export default function LaunchDialog() {
           </button>
         </div>
         <h2 id="launch-title" className="mt-4 text-2xl font-semibold tracking-tight">
-          Inklink is in active development.
+          Where would you like to start?
         </h2>
         <p className="mt-3 text-[15px] leading-relaxed text-graphite">
-          The native app, shop gateway and payment integrations are being built and are not yet
-          publicly available. Explore how the network is designed to work in the meantime.
+          No account and no wallet needed. Payment is completed in the Inklink mobile app.
         </p>
         <div className="mt-7 flex flex-col gap-2">
           {[
-            ['workflow', 'See the printing workflow'],
-            ['local', 'How local-first printing works'],
-            ['technology', 'Explore the technology'],
-          ].map(([id, label]) => (
+            [LINKS.app, 'Print a document', 'Pick a nearby shop and chat with its print operator'],
+            [LINKS.shop, 'Run a print shop', 'Orders, printers, payments and shop settings'],
+            [LINKS.agent, 'Watch the Agent Workspace', 'The autonomous operator configuring a real printer'],
+            [LINKS.demo, 'Judge walkthrough', 'Guided demo with live system checks'],
+          ].map(([url, label, hint]) => (
             <button
-              key={id}
-              onClick={() => go(id)}
-              className="flex items-center justify-between rounded-xl border border-light-grey px-4 py-3 text-left text-sm font-medium transition-colors hover:border-ink"
+              key={label}
+              onClick={() => go(url)}
+              className="flex items-center justify-between gap-4 rounded-xl border border-light-grey px-4 py-3 text-left transition-colors hover:border-ink"
             >
-              {label}
-              <ArrowRight size={16} className="text-signal" />
+              <span>
+                <span className="block text-sm font-medium">{label}</span>
+                <span className="block text-xs text-graphite">{hint}</span>
+              </span>
+              <ArrowRight size={16} className="shrink-0 text-signal" />
             </button>
           ))}
         </div>

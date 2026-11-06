@@ -27,7 +27,10 @@ export function ShopList() {
     <div className="mx-auto flex min-h-full max-w-lg flex-col">
       <header className="flex items-center justify-between px-5 py-4">
         <Logo />
-        <span className="label-mono">No login needed</span>
+        <nav aria-label="Inklink" className="flex items-center gap-4 text-xs">
+          <Link to="/app/jobs" className="text-graphite hover:text-ink">My orders</Link>
+          <a href="/" className="text-graphite hover:text-ink">About Inklink</a>
+        </nav>
       </header>
 
       <main className="flex-1 px-5 pb-10">
@@ -79,8 +82,10 @@ export function ShopList() {
         )}
       </main>
 
-      <footer className="px-5 pb-6 text-xs text-graphite">
-        Payment is completed in the Inklink app. This page never asks for a wallet or card.
+      <footer className="flex flex-wrap gap-x-4 gap-y-1 px-5 pb-6 text-xs text-graphite">
+        <span>No login needed. Payment is completed in the Inklink app; this page never asks for a wallet or card.</span>
+        <Link to="/shop" className="underline hover:text-ink">For print shops</Link>
+        <Link to="/demo" className="underline hover:text-ink">Judge walkthrough</Link>
       </footer>
     </div>
   );

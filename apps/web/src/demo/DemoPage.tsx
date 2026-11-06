@@ -69,7 +69,11 @@ export function DemoPage() {
       <header className="flex items-center gap-4">
         <Logo />
         <span className="label-mono">ETHGlobal judge walkthrough</span>
-        <a href="/" className="ml-auto text-sm text-graphite underline">Landing page</a>
+        <nav aria-label="Inklink" className="ml-auto flex gap-4 text-sm text-graphite">
+          <Link to="/app" className="hover:text-ink">Customer app</Link>
+          <Link to="/shop" className="hover:text-ink">Shop</Link>
+          <a href="/" className="underline hover:text-ink">Inklink website</a>
+        </nav>
       </header>
 
       <h1 className="mt-8 text-4xl font-semibold tracking-tightest">Inklink in three minutes.</h1>
