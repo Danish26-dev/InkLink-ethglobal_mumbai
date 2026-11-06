@@ -5,6 +5,8 @@ Devices authenticate with `Authorization: Bearer <DEVICE_TOKEN>`.
 POST /api/v1/devices/heartbeat  {deviceId, shopId, type, firmware?, state, printerId?, detail?}
 POST /api/v1/devices/events     {deviceId, jobId, type, detail?}
     type: print_started | print_completed | print_failed | paper_out | jam | door_open
+GET  /api/v1/devices/display?deviceId=…   read-only job/payment status for the device's shop
+    (cloud equivalent of the shop gateway's /display, built from backend records)
 
 Status shown to the shop is derived only from what devices actually reported:
   not_configured  DEVICE_TOKEN is not set (no device can report)
@@ -16,13 +18,14 @@ that the backend submitted (`executing`) — never for demo jobs.
 
 from __future__ import annotations
 
+import re
 import time
 from typing import Any
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Query, Request
 from pydantic import BaseModel, Field
 
-from . import events
+from . import events, gateway_relay
 from .auth import api_error, require_service_token
 from .config import get_settings
 from .store import get_store, iso_from_epoch, now_iso
@@ -84,6 +87,89 @@ class DeviceEventIn(BaseModel):
     jobId: str
     type: str
     detail: str | None = Field(None, max_length=280)
+
+
+# ───────────── GET /api/v1/devices/display: what a shop device may show ─────────────
+
+_CLOSED_JOB_STATES = ("completed", "cancelled", "failed")
+_HEDERA_TX_ID = re.compile(r"^\d+\.\d+\.\d+@\d+\.\d+$")
+DISPLAY_MAX_JOBS = 10
+
+
+def _verification_status(rec) -> str:
+    """Backend view only. `verified` requires the record the HMAC-verified settlement callback
+    wrote (status settled + a Hedera tx id + the backend's verification time); the agent sends
+    that callback only after its mirror-node check. Nothing a device sends can change this."""
+    if rec is None:
+        return "not_started"
+    if rec.status == "settled":
+        ok = bool(rec.transaction_id and _HEDERA_TX_ID.match(rec.transaction_id) and rec.verified_at)
+        return "verified" if ok else "unverified"
+    return {"processing": "pending", "failed": "failed", "expired": "expired"}.get(rec.status, "pending")
+
+
+def _device_job(job) -> dict[str, Any]:
+    store = get_store()
+    rec = store.payments.get(job.payment_id) if job.payment_id else None
+    quote = store.quotes.get(rec.quote_id if rec else job.quote_id) if (rec or job.quote_id) else None
+    verification = _verification_status(rec)
+    verified = verification == "verified"
+    # Backend's own decision: published only when it submitted the job after every gate passed.
+    authorized = any(e.get("type") == "execution_authorized" for e in store.events.get(job.job_id, []))
+    amount = rec.amount_usdc if rec else (quote.usdc if quote else None)
+    return {
+        "job_id": job.job_id,
+        "job_state": job.status,
+        "payment_status": rec.status if rec else job.payment_status,
+        "payment_id": rec.payment_id if rec else None,
+        "amount": amount,
+        "asset": "HTS_USDC" if amount else None,
+        "network": "hedera:testnet" if amount else None,
+        "transaction_id": rec.transaction_id if verified else None,
+        "verification_status": verification,
+        "verified_at": rec.verified_at if verified else None,
+        "settled_at": rec.settled_at if verified else None,
+        "hashscan_url": rec.hashscan_url if verified else None,
+        "execution_authorized": authorized,
+        "device_status": job.device_status,
+        "updated_at": job.updated_at,
+    }
+
+
+@router.get("/display")
+async def device_display(request: Request, deviceId: str = Query(..., min_length=1, max_length=64,
+                                                                  pattern=r"^[A-Za-z0-9_.-]+$")) -> dict[str, Any]:
+    """Status for a shop display (ESP32-S3), read-only, from the backend's own records.
+
+    The device must have reported a heartbeat; it sees only its own shop's real jobs. It
+    receives status only: never documents, file names, prices in INR or customer data."""
+    require_service_token(request, get_settings().device_token, "DEVICE_TOKEN")
+    s = get_settings()
+    store = get_store()
+    device = store.devices.get(deviceId)
+    if not device:
+        raise api_error(404, "DEVICE_NOT_FOUND", "Unknown device. Send a heartbeat first.")
+    shop_id = device.get("shopId")
+    if store.is_demo_shop(shop_id):
+        raise api_error(409, "POLICY_VIOLATION", "The demo shop has no real payments to display.")
+    with store.lock:
+        active = sorted((j for j in store.jobs.values() if j.shop_id == shop_id and j.status not in _CLOSED_JOB_STATES),
+                        key=lambda j: j.updated_at, reverse=True)[:DISPLAY_MAX_JOBS]
+        jobs = [_device_job(j) for j in active]
+        cfg = store.shop_config(shop_id)
+    age = time.time() - float(device.get("lastSeen", 0))
+    relay = gateway_relay.status()
+    return {
+        "ok": True,
+        "server_time": now_iso(),
+        "device": {"device_id": deviceId, "shop_id": shop_id,
+                   "status": "online" if age <= s.device_offline_after_seconds else "offline",
+                   "last_seen_at": iso_from_epoch(float(device.get("lastSeen", 0)))},
+        "shop": {"shop_id": shop_id, "name": cfg.get("name"), "accepting_orders": bool(cfg.get("acceptingOrders", True))},
+        "printer": {"mode": relay.get("mode"), "gateway_connected": relay.get("connected")},
+        "active_job": jobs[0] if jobs else None,
+        "jobs": jobs,
+    }
 
 
 @router.post("/events")

@@ -293,6 +293,8 @@ async def payment_settled(request: Request) -> dict[str, Any]:
         rec.status = "settled"
         rec.transaction_id = tx
         rec.hashscan_url = e["hashscanUrl"]
+        rec.settled_at = e.get("settlementTimestamp") if isinstance(e.get("settlementTimestamp"), str) else None
+        rec.verified_at = now_iso()
         if job:
             job.payment_status = "settled"
             job.status = "awaiting_execution"  # payment authorizes execution; it does NOT complete the job
@@ -306,8 +308,8 @@ async def payment_settled(request: Request) -> dict[str, Any]:
                         **_payment_facts(rec.amount_usdc),
                         # settledAt: consensus time the agent verified on the mirror node;
                         # verifiedAt: when this backend verified the signed callback.
-                        "settledAt": e.get("settlementTimestamp") if isinstance(e.get("settlementTimestamp"), str) else None,
-                        "verifiedAt": now_iso()},
+                        "settledAt": rec.settled_at,
+                        "verifiedAt": rec.verified_at},
                        source="payment")
         events.publish_job_status(job)
         # Queued only now, after the signed settlement was verified. Reference by hash only.

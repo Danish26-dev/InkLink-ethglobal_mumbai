@@ -68,6 +68,10 @@ Two independent paths, both outbound from the device's point of view:
    - `POST /api/v1/devices/heartbeat` `{deviceId, shopId, type:"esp32-s3", firmware, state, printerId?, detail?}`
    - `POST /api/v1/devices/events` `{deviceId, jobId, type: print_started|print_completed|print_failed|paper_out|jam|door_open}`
 
+      - `GET /api/v1/devices/display?deviceId=<id>`: read-only job and payment status for the device's
+     shop, straight from the cloud backend (works without a shop PC, e.g. from the Cirkit Designer
+     simulator). Same auth. The device must have sent a heartbeat. Demo-shop devices get `409`.
+
    Read the token with `gcloud secrets versions access latest --secret=DEVICE_TOKEN --project=inklink-513817`.
    A job becomes `completed` only from a real `print_completed` for a job the backend submitted.
 2. **Status for the display (from the shop gateway)**: `GET http://<shop-computer>:7780/display`

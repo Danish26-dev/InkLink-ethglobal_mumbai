@@ -143,6 +143,9 @@ class PaymentRecord:
     status: str
     transaction_id: str | None = None
     hashscan_url: str | None = None
+    # Set only by the HMAC-verified settlement callback (after the agent's mirror-node check).
+    settled_at: str | None = None    # consensus time reported by the payment agent
+    verified_at: str | None = None   # when this backend accepted the signed callback
 
 
 @dataclass
