@@ -63,6 +63,18 @@ export function AgentPanel({ state, job, agentAvailable, agentReason }: {
               </dd>
             </div>
           )}
+          {last?.requestId && (
+            <div className="flex items-center gap-2">
+              <dt className="pl-5 text-graphite">0G request</dt>
+              <dd className="ml-auto truncate font-mono text-[11px]" title={last.requestId}>{last.requestId}</dd>
+            </div>
+          )}
+          {last?.provider && (
+            <div className="flex items-center gap-2">
+              <dt className="pl-5 text-graphite">Provider</dt>
+              <dd className="ml-auto truncate font-mono text-[11px]" title={last.provider}>{last.provider}</dd>
+            </div>
+          )}
         </dl>
         {sel && <p className="mt-2 text-[11px] leading-snug text-graphite">{sel.reason}{sel.raisedBy ? ` Raised by ${sel.raisedBy}.` : ''}</p>}
         {agentAvailable === false && !run?.active && agentReason && (
