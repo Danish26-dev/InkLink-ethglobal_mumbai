@@ -100,12 +100,20 @@ facilitator, which pays the network fee. There is no checkout page, no signup an
 
 ### Proof (real Hedera testnet transactions)
 
-**Full cloud flow, nothing mocked.** The app's own API client and device-key signing, against
-the deployed Cloud Run backend, payment agent and x402 gate:
+**Paid from the phone, nothing mocked.** The Inklink Android app on a real device: scan the shop
+QR, pick the job, approve a budget, pay. End to end through the deployed Cloud Run backend, payment
+agent and x402 gate:
 
 | What | Hedera reference |
 |---|---|
-| **Print job paid end to end on the cloud**: backend quote (2.00 INR = 0.024 USDC), device-signed budget, agent discovered the endpoint, read the 402 price, paid, verified, signed callback delivered | [`0.0.7162784@1793992647.222766103`](https://hashscan.io/testnet/transaction/0.0.7162784-1793992647-222766103) (job `job_382a9a8becee`, HCS entry #7) |
+| **Print job paid from the phone app**: paired with the device key, device-signed budget, agent discovered the endpoint, read the 402 price, paid 0.024 USDC, verified on the mirror node | [`0.0.7162784@1794008216.704679762`](https://hashscan.io/testnet/transaction/0.0.7162784-1794008216-704679762) (payment `payment_831523d3`, HCS entry #9) |
+
+**Full cloud flow driven headlessly** (the app's own API client and device-key signing, against the
+same deployed services):
+
+| What | Hedera reference |
+|---|---|
+| Print job paid end to end: backend quote (2.00 INR = 0.024 USDC), device-signed budget, endpoint discovery, 402 price read, paid, verified, signed callback delivered | [`0.0.7162784@1793992647.222766103`](https://hashscan.io/testnet/transaction/0.0.7162784-1793992647-222766103) (job `job_382a9a8becee`, HCS entry #7) |
 | First cloud payment, same flow | [`0.0.7162784@1793986272.588926799`](https://hashscan.io/testnet/transaction/0.0.7162784-1793986272-588926799) (job `job_1b50094f0bb9`, HCS entry #5) |
 
 **Agent runs** (`npm run demo:pay`: dev device key, fixed 0.10 USDC price, stand-in shop account):
