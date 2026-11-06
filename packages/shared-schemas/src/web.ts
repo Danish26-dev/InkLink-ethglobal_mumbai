@@ -10,7 +10,7 @@
 
 import type { IsoTimestamp } from "./common.js";
 import type { JobStatus, PaymentStatus, DeviceStatus, Quote } from "./contracts.js";
-import type { OperatorPrintConfig, PrinterSummary } from "./operator-events.js";
+import type { OperatorPrintConfig, PrinterSummary, TrustMode, TrustSelection } from "./operator-events.js";
 
 /* POST /api/v1/web/sessions (no auth) */
 export interface WebSession {
@@ -65,7 +65,14 @@ export interface JobView {
     pageCount: number | null;
     reviewRecommended: boolean;
     notes: string[];
+    /** The original is never modified; an edited copy is used only once approved. */
+    editStatus: "none" | "pending_review" | "approved" | "rejected";
+    /** False once the files were deleted under the retention policy. */
+    available: boolean;
+    /** Local sensitivity classification (labels only, never content). */
+    classification: { level: "sensitive" | "non_sensitive" | "unclassified"; categories: string[]; reason: string } | null;
   } | null;
+  privacy: JobPrivacy;
   operatorConfig: OperatorPrintConfig;
   /** True when the adapter validated the full config against the real printer. */
   configValidated: boolean;
@@ -80,6 +87,31 @@ export interface JobView {
   submission: { ok: boolean; state: string | null; message: string | null; submissionId?: string | null } | null;
   createdAt: IsoTimestamp;
   updatedAt: IsoTimestamp;
+}
+
+/** 0G trust-mode decision and call metadata for a job. Never includes keys, prompts or completions. */
+export interface JobPrivacy {
+  requestedTrustMode: TrustMode | null;
+  selection: (Omit<TrustSelection, "raisedBy"> & {
+    raisedBy: TrustSelection["raisedBy"];
+    shopMinimumTrustMode: TrustMode | null;
+    provider: string | null;
+    model: string | null;
+    error?: { code: string; message: string } | null;
+    at: IsoTimestamp;
+  }) | null;
+  inferenceCalls: number;
+  lastInference: {
+    at: IsoTimestamp;
+    trustMode: TrustMode;
+    model: string;
+    ok: boolean;
+    provider?: string | null;
+    requestId?: string | null;
+    /** From 0G `x_0g_trace.tee_verified`; null = not requested (standard). */
+    teeVerified?: boolean | null;
+    errorCode?: string;
+  } | null;
 }
 
 /* POST /api/v1/jobs/{jobId}/quote/approve -> native-app payment handoff */
@@ -118,6 +150,7 @@ export interface ShopOverview {
     model: string | null;
     trustMode: string | null;
     reason: string | null;
+    zeroG: ZeroGStatus;
   };
   printerAdapter: { reachable: boolean; printers: PrinterSummary[]; defaultPrinter?: string | null; error: string | null };
   payments: { configured: boolean };
@@ -135,4 +168,41 @@ export interface ShopConfig {
   /** INR per page, decimal strings. */
   pricePerPageMonochrome: string;
   pricePerPageColor: string;
+  /** Shop-wide floor for 0G inference; can only make runs stricter. */
+  minimumTrustMode?: TrustMode | null;
+}
+
+/** Which 0G trust modes have a key configured on the backend (never the keys). */
+export interface ZeroGStatus {
+  baseUrl: string;
+  defaultTrustMode: TrustMode;
+  requireTeeVerification: boolean;
+  modes: Record<TrustMode, { configured: boolean; model: string }>;
+}
+
+/* GET /api/v1/shop/payments */
+export interface ShopPayments {
+  configured: boolean;
+  network: "hedera_testnet";
+  merchantAccountId: string | null;
+  settlementAsset: "HTS-USDC";
+  inrToUsdcRate: string | null;
+  payments: {
+    paymentId: string;
+    jobId: string;
+    quoteId: string;
+    status: PaymentStatus;
+    amountUsdc: string;
+    amountInr: string | null;
+    transactionId: string | null;
+    hashscanUrl: string | null;
+    jobStatus: JobStatus | null;
+  }[];
+  awaitingPayment: { jobId: string; status: JobStatus; paymentStatus: PaymentStatus; amountInr: string | null }[];
+}
+
+/* GET /api/v1/shop/hardware */
+export interface ShopHardware {
+  printerAdapter: { reachable: boolean; printers: PrinterSummary[]; defaultPrinter: string | null; error: string | null; url: string };
+  jobs: { jobId: string; status: JobStatus; deviceStatus: DeviceStatus; printerId: string | null; submission: JobView["submission"] }[];
 }

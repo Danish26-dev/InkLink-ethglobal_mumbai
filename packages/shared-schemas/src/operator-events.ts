@@ -98,6 +98,22 @@ export interface AgentStartedPayload {
   /** Privacy mode requested from 0G for every inference call; null for other providers. */
   trustMode: "private" | "verified" | "standard" | null;
   instruction: string;
+  /** Backend policy decision for this run (labels only; added by the backend). */
+  trustSelection?: TrustSelection;
+}
+
+export type TrustMode = "standard" | "verified" | "private";
+
+export interface TrustSelection {
+  /** Minimum required by the document/instruction classification. */
+  requiredTrustMode: TrustMode;
+  /** Stricter mode asked for by the customer, if any. */
+  requestedTrustMode: TrustMode | null;
+  /** Mode actually used: strictest of required, requested and shop minimum. Never weaker. */
+  effectiveTrustMode: TrustMode;
+  reason: string;
+  raisedBy: "customer" | "shop minimum" | null;
+  documentLevel: "sensitive" | "non_sensitive" | "unclassified" | null;
 }
 
 /** Customer-visible narration from the model's text output (not hidden reasoning). */
@@ -158,7 +174,8 @@ export interface PrinterReadinessUpdatedPayload {
   printers?: PrinterSummary[];
 }
 
-export type ApprovalKind = "customer_quote" | "shop" | "payment";
+/** `document_review`: the customer must approve or reject an edited copy before it is priced. */
+export type ApprovalKind = "customer_quote" | "shop" | "payment" | "document_review";
 
 export interface ApprovalRequiredPayload {
   kind: ApprovalKind;
