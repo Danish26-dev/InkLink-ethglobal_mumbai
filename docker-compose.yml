@@ -1,0 +1,153 @@
+# Inklink — production-like local stack (same images as Cloud Run).
+#
+#   cp deploy/env/compose.env.example .env      # fill in; .env is git-ignored
+#   docker compose up -d --build                # backend, agent, document engine, web
+#   docker compose --profile payments up -d     # + Hedera payment agent and x402 gate
+#   open http://localhost:8080  (landing)  ·  http://localhost:8080/portal  (app)
+#
+# Each container receives ONLY the variables it needs (the agent never sees a 0G key,
+# the gate never sees the Hedera private key). Secrets come from .env at run time and
+# are never part of an image. Everything binds to 127.0.0.1 on the host.
+#
+# The printer stays on this machine: the backend reaches the local printer adapter
+# (services/local-printer-agent, port 7777) through host.docker.internal, exactly as
+# a cloud backend would reach it through the shop gateway connector.
+
+name: inklink
+
+x-restart: &restart
+  restart: unless-stopped
+
+services:
+  backend:
+    <<: *restart
+    build:
+      context: services/backend
+    image: inklink-backend:local
+    environment:
+      PORT: "8080"
+      DATA_DIR: /data
+      AGENT_URL: http://agent:8080
+      DOCUMENT_ENGINE_URL: http://document-engine:5001
+      PAYMENT_AGENT_URL: http://payment-agent:4021
+      GATE_URL: http://gate:4022
+      BACKEND_INTERNAL_URL: http://backend:8080
+      BACKEND_ALLOWED_ORIGINS: ""
+      PRINTER_MODE: ${PRINTER_MODE:-direct}
+      PRINTER_AGENT_URL: ${PRINTER_AGENT_URL:-http://host.docker.internal:7777}
+      PUBLIC_API_ORIGIN: ${PUBLIC_API_ORIGIN:-}
+      SESSION_COOKIE_SECURE: "false"
+      JURY_DEMO_ENABLED: ${JURY_DEMO_ENABLED:-true}
+      SHOP_NAME: ${SHOP_NAME:-Inklink Print Shop}
+      ZERO_G_STANDARD_API_KEY: ${ZERO_G_STANDARD_API_KEY:-}
+      ZERO_G_VERIFIED_API_KEY: ${ZERO_G_VERIFIED_API_KEY:-}
+      ZERO_G_PRIVATE_API_KEY: ${ZERO_G_PRIVATE_API_KEY:-}
+      AGENT_SERVICE_TOKEN: ${AGENT_SERVICE_TOKEN:-}
+      PRINTER_AGENT_TOKEN: ${PRINTER_AGENT_TOKEN:-}
+      GATEWAY_TOKEN: ${GATEWAY_TOKEN:-}
+      SHOP_ADMIN_TOKEN: ${SHOP_ADMIN_TOKEN:-}
+      DEVICE_TOKEN: ${DEVICE_TOKEN:-}
+      INTERNAL_API_TOKEN: ${INTERNAL_API_TOKEN:-}
+      BACKEND_API_TOKEN: ${BACKEND_API_TOKEN:-}
+      PAYMENT_EVENT_SIGNING_SECRET: ${PAYMENT_EVENT_SIGNING_SECRET:-}
+      MERCHANT_ACCOUNT_ID: ${MERCHANT_ACCOUNT_ID:-}
+      INR_TO_USDC_RATE: ${INR_TO_USDC_RATE:-}
+    volumes:
+      - backend-data:/data
+    extra_hosts:
+      - host.docker.internal:host-gateway
+    ports:
+      - "127.0.0.1:${BACKEND_HOST_PORT:-8000}:8080"
+    depends_on:
+      document-engine:
+        condition: service_healthy
+
+  agent:
+    <<: *restart
+    build:
+      context: .
+      dockerfile: services/strands-agent/Dockerfile
+    image: inklink-agent:local
+    environment:
+      PORT: "8080"
+      HOST: 0.0.0.0
+      INKLINK_MODEL_PROVIDER: 0g-private-computer
+      DOCUMENT_ENGINE_URL: http://document-engine:5001
+      BACKEND_URL: http://backend:8080
+      # Printer discovery/validation goes through the backend (never /print).
+      PRINTER_AGENT_URL: http://backend:8080/api/v1/internal/printer
+      PRINTER_AGENT_TOKEN: ${PRINTER_AGENT_TOKEN:-}
+      AGENT_SERVICE_TOKEN: ${AGENT_SERVICE_TOKEN:-}
+    depends_on:
+      document-engine:
+        condition: service_healthy
+
+  document-engine:
+    <<: *restart
+    build:
+      context: services/document-engine
+    image: inklink-document-engine:local
+    environment:
+      PORT: "5001"
+
+  web:
+    <<: *restart
+    build:
+      context: .
+      dockerfile: deploy/web/Dockerfile
+    image: inklink-web:local
+    environment:
+      PORT: "8080"
+      BACKEND_URL: http://backend:8080
+    ports:
+      - "127.0.0.1:${WEB_HOST_PORT:-8080}:8080"
+    depends_on:
+      backend:
+        condition: service_healthy
+
+  # ── Hedera x402 payments (needs a funded testnet agent account) ──
+  payment-agent:
+    <<: *restart
+    profiles: ["payments"]
+    build:
+      context: .
+      dockerfile: services/payment-agent/Dockerfile
+    image: inklink-payment-agent:local
+    command: ["npm", "start"]
+    environment:
+      PORT: "4021"
+      ALLOWED_RESOURCE_ORIGINS: http://gate:4022
+      BACKEND_EVENT_URL: http://backend:8080/api/v1/internal/payment-settled
+      INTERNAL_API_TOKEN: ${INTERNAL_API_TOKEN:-}
+      PAYMENT_EVENT_SIGNING_SECRET: ${PAYMENT_EVENT_SIGNING_SECRET:-}
+      HEDERA_AGENT_ACCOUNT_ID: ${HEDERA_AGENT_ACCOUNT_ID:-}
+      HEDERA_AGENT_PRIVATE_KEY: ${HEDERA_AGENT_PRIVATE_KEY:-}
+      MERCHANT_ID: ${MERCHANT_ID:-shop_001}
+      MERCHANT_ACCOUNT_ID: ${MERCHANT_ACCOUNT_ID:-}
+      FACILITATOR_URL: ${FACILITATOR_URL:-https://api.testnet.blocky402.com}
+    volumes:
+      - payment-data:/data
+    depends_on:
+      - gate
+
+  gate:
+    <<: *restart
+    profiles: ["payments"]
+    build:
+      context: .
+      dockerfile: services/payment-agent/Dockerfile
+    image: inklink-payment-agent:local
+    command: ["npm", "run", "gate"]
+    environment:
+      GATE_PORT: "4022"
+      HEDERA_AGENT_ACCOUNT_ID: ${HEDERA_AGENT_ACCOUNT_ID:-}
+      HEDERA_AGENT_PRIVATE_KEY: unused-by-gate
+      MERCHANT_ID: ${MERCHANT_ID:-shop_001}
+      MERCHANT_ACCOUNT_ID: ${MERCHANT_ACCOUNT_ID:-}
+      REQUIREMENTS_URL_TEMPLATE: http://backend:8080/api/v1/internal/jobs/{jobId}/payment-requirements
+      BACKEND_API_TOKEN: ${BACKEND_API_TOKEN:-}
+      FACILITATOR_URL: ${FACILITATOR_URL:-https://api.testnet.blocky402.com}
+
+volumes:
+  backend-data:
+  payment-data:
