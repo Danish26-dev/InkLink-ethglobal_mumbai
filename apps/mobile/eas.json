@@ -10,7 +10,7 @@
       "android": { "buildType": "apk" },
       "env": {
         "INKLINK_ENV": "staging",
-        "EXPO_PUBLIC_CLOUD_ORIGIN": "https://REPLACE-WITH-inklink-backend-URL.asia-south1.run.app"
+        "EXPO_PUBLIC_CLOUD_ORIGIN": "https://inklink-backend-765131918851.asia-south1.run.app"
       }
     },
     "production": {
