@@ -8,7 +8,7 @@ Status legend: **Configured** = set on this machine · **Tested** = exercised by
 
 | What | File | Variables | Status |
 |---|---|---|---|
-| Three 0G Private Computer keys | `services/backend/.env` | `ZERO_G_STANDARD_API_KEY`, `ZERO_G_VERIFIED_API_KEY`, `ZERO_G_PRIVATE_API_KEY` | Pending (code tested with mocks; live catalog check tested) |
+| Three 0G Private Computer keys | `services/backend/.env` | `ZERO_G_STANDARD_API_KEY`, `ZERO_G_VERIFIED_API_KEY`, `ZERO_G_PRIVATE_API_KEY` | **Configured and tested live**: all three modes answer; a non-sensitive PDF ran on Standard and a salary slip on Private, end to end through the agent |
 | 0G model / routing | `services/backend/.env` | `ZERO_G_BASE_URL`, `ZERO_G_MODEL_ID` (default `glm-5.3`, TeeML + tools), optional `ZERO_G_{STANDARD,VERIFIED,PRIVATE}_MODEL_ID`, `ZERO_G_DEFAULT_TRUST_MODE`, `ZERO_G_TIMEOUT_SECONDS`, `ZERO_G_MAX_RETRIES`, `ZERO_G_REQUIRE_TEE_VERIFICATION` | Configured defaults |
 | Hedera agent account | `services/payment-agent/.env` and `deploy/.env.gate` | `HEDERA_AGENT_ACCOUNT_ID`, `HEDERA_AGENT_PRIVATE_KEY` | Pending (Omkar) |
 | Hedera merchant account | backend, payment agent, gate | `MERCHANT_ACCOUNT_ID` (identical everywhere), `MERCHANT_ID` | Pending |
@@ -35,6 +35,14 @@ node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
 ```
 
 Use one fresh value per shared secret and put the same value on both sides.
+
+## 0G verification: what is actually checked
+
+The documentation says the 0G router reports `x_0g_trace.tee_verified` when the request asks for `verify_tee`. The live router currently omits that field. Inklink therefore records each Verified/Private call as one of the following, and never as anything stronger:
+
+- **TEE signature verified**: the router returned `tee_verified: true`.
+- **Attested provider**: the provider that served the call (`x_0g_trace.provider`) is published in `GET /v1/providers` as `tee_attested` at the requested tier (Private needs `trust_mode: private`, `verifiability: TeeML`). This is checked on every call.
+- **Rejected**: `tee_verified: false`, or the serving provider does not qualify. The output is discarded.
 
 ## Rules that the code enforces
 
