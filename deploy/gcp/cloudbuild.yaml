@@ -1,0 +1,58 @@
+# Cloud Build: build and push every Inklink image in parallel.
+# Submitted by deploy/gcp/03-build-images.sh (from the repo root):
+#   gcloud builds submit --config=deploy/gcp/cloudbuild.yaml \
+#     --substitutions=_REGISTRY=asia-south1-docker.pkg.dev/inklink-513817/inklink,_TAG=<git sha> ...
+#
+# No secrets are used or produced by the build: images carry code only, and every
+# credential is injected at run time from Secret Manager.
+
+substitutions:
+  _REGISTRY: asia-south1-docker.pkg.dev/inklink-513817/inklink
+  _TAG: manual
+
+options:
+  machineType: E2_HIGHCPU_8
+  # Required when the build runs as a user-managed service account (inklink-build).
+  logging: CLOUD_LOGGING_ONLY
+  env:
+    - DOCKER_BUILDKIT=1
+
+timeout: 3600s
+
+steps:
+  - id: backend
+    name: gcr.io/cloud-builders/docker
+    waitFor: ["-"]
+    args: ["build", "-t", "${_REGISTRY}/backend:${_TAG}", "-t", "${_REGISTRY}/backend:latest", "services/backend"]
+
+  - id: document-engine
+    name: gcr.io/cloud-builders/docker
+    waitFor: ["-"]
+    args: ["build", "-t", "${_REGISTRY}/document-engine:${_TAG}", "-t", "${_REGISTRY}/document-engine:latest", "services/document-engine"]
+
+  - id: agent
+    name: gcr.io/cloud-builders/docker
+    waitFor: ["-"]
+    args: ["build", "-f", "services/strands-agent/Dockerfile", "-t", "${_REGISTRY}/agent:${_TAG}", "-t", "${_REGISTRY}/agent:latest", "."]
+
+  - id: payment-agent
+    name: gcr.io/cloud-builders/docker
+    waitFor: ["-"]
+    args: ["build", "-f", "services/payment-agent/Dockerfile", "-t", "${_REGISTRY}/payment-agent:${_TAG}", "-t", "${_REGISTRY}/payment-agent:latest", "."]
+
+  - id: web
+    name: gcr.io/cloud-builders/docker
+    waitFor: ["-"]
+    args: ["build", "-f", "deploy/web/Dockerfile", "-t", "${_REGISTRY}/web:${_TAG}", "-t", "${_REGISTRY}/web:latest", "."]
+
+images:
+  - ${_REGISTRY}/backend:${_TAG}
+  - ${_REGISTRY}/backend:latest
+  - ${_REGISTRY}/document-engine:${_TAG}
+  - ${_REGISTRY}/document-engine:latest
+  - ${_REGISTRY}/agent:${_TAG}
+  - ${_REGISTRY}/agent:latest
+  - ${_REGISTRY}/payment-agent:${_TAG}
+  - ${_REGISTRY}/payment-agent:latest
+  - ${_REGISTRY}/web:${_TAG}
+  - ${_REGISTRY}/web:latest

@@ -19,6 +19,10 @@ qa-shots
 *.keystore
 # Kiro local-only configuration
 .kiro/
+# Cloud Run deployment: local settings, rendered manifests, last built tag
+deploy/gcp/env/*.env
+deploy/gcp/rendered/
+deploy/gcp/.last-tag
 
 # ── Inklink monorepo additions (native app, payment services) ──
 # Empty-valued env templates are meant to be committed; real .env files stay ignored above.

@@ -1,7 +1,12 @@
-# Inklink — Hosting the payment agent and gate on GCP
+# Inklink — Hosting the payment agent and gate on GCP (VM alternative)
 
-Status: **prepared, not deployed, and the image has not been build-tested** (no Docker engine was
-running on the dev machine). Nothing here has run on GCP yet.
+> **Superseded for staging** by the Cloud Run deployment of the whole stack:
+> [CLOUD_SHELL_DEPLOYMENT.md](../CLOUD_SHELL_DEPLOYMENT.md) and
+> [DEPLOYMENT_ARCHITECTURE.md](../DEPLOYMENT_ARCHITECTURE.md), where the payment agent and gate run as
+> Cloud Run services. This VM guide stays as an alternative for hosting only the payment pieces.
+> The payment image now builds (verified with Docker locally).
+
+Status: **prepared, not deployed.** Nothing here has run on GCP yet.
 
 ## What gets hosted, and what does not
 
