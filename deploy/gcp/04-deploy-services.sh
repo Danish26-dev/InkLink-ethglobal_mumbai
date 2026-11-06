@@ -90,6 +90,8 @@ if (( DEPLOY_PAYMENTS )); then
     "MERCHANT_ACCOUNT_ID=${MERCHANT_ACCOUNT_ID}"
     "FACILITATOR_URL=${FACILITATOR_URL:-https://api.testnet.blocky402.com}"
   )
+  # HCS spend audit log (topic id, public; empty = audit log off).
+  [[ -n "${HCS_AUDIT_TOPIC_ID:-}" ]] && S_ENV+=("HCS_AUDIT_TOPIC_ID=${HCS_AUDIT_TOPIC_ID}")
   S_SECRET_ENV=(
     "INTERNAL_API_TOKEN=INTERNAL_API_TOKEN"
     "PAYMENT_EVENT_SIGNING_SECRET=PAYMENT_EVENT_SIGNING_SECRET"
