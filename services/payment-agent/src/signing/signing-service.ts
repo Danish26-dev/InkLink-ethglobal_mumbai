@@ -110,7 +110,7 @@ export class SigningService {
    * A fresh x402 client is created per payment so constraints can never leak
    * across payments.
    */
-  payingFetch(constraints: PaymentConstraints): typeof fetch {
+  payingFetch(constraints: PaymentConstraints, onSigned?: () => void): typeof fetch {
     const expectedAtomic = toSmallestUnit(constraints.amount, this.cfg.usdcDecimals);
     const { usdcTokenId } = this.cfg;
 
@@ -141,7 +141,10 @@ export class SigningService {
         ],
       })
       // Drop every option that is not exactly the vetted payment.
-      .registerPolicy((_version, requirements) => requirements.filter(matchesIntent));
+      .registerPolicy((_version, requirements) => requirements.filter(matchesIntent))
+      // From here on a signed transfer exists and the gate may settle it, even if the
+      // response never reaches us. The caller must then keep the spend reserved.
+      .onAfterPaymentCreation(async () => onSigned?.());
 
     return wrapFetchWithPayment(fetch, client);
   }

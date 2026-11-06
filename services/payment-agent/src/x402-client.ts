@@ -21,8 +21,25 @@ import {
 
 const POLICY_BLOCK = /filtered out by policies|spend control|exceeds|not allowed/i;
 
+/**
+ * The transfer was signed and handed to the gate, but no settlement answer came back
+ * (connection dropped, timeout, error status without a PAYMENT-RESPONSE). The gate may
+ * have settled it, so funds MAY have moved: the spend must stay reserved.
+ */
+export class PaymentOutcomeUnknownError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "PaymentOutcomeUnknownError";
+  }
+}
+
+/** Minimal surface of SigningService used here (lets tests drive the flow without keys). */
+export interface PayingFetchFactory {
+  payingFetch(constraints: PaymentConstraints, onSigned?: () => void): typeof fetch;
+}
+
 export class X402Client {
-  constructor(private readonly signing: SigningService) {}
+  constructor(private readonly signing: PayingFetchFactory | SigningService) {}
 
   /**
    * `init` carries the method/body for the protected route. Inklink's paid route is
@@ -34,13 +51,19 @@ export class X402Client {
     constraints: PaymentConstraints,
     init: RequestInit = {},
   ): Promise<X402SettleResponse> {
-    const payingFetch = this.signing.payingFetch(constraints);
+    let signed = false;
+    const payingFetch = this.signing.payingFetch(constraints, () => {
+      signed = true;
+    });
+    const unknown = (why: string) =>
+      new PaymentOutcomeUnknownError(`Signed payment sent but the outcome is unknown: ${why}`);
 
     let res: Response;
     try {
       res = await payingFetch(resourceUrl, init);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
+      if (signed) throw unknown(msg);
       if (POLICY_BLOCK.test(msg)) {
         throw new PolicyBlockedError(
           `Merchant requirements did not match the authorized payment: ${msg}`,
@@ -49,20 +72,18 @@ export class X402Client {
       throw err;
     }
 
-    if (!res.ok) {
-      const body = await res.text().catch(() => "");
-      throw new Error(`Payment request failed (HTTP ${res.status}): ${body.slice(0, 300)}`);
-    }
-
     const header =
       res.headers.get("PAYMENT-RESPONSE") ?? res.headers.get("X-PAYMENT-RESPONSE");
-    if (!header) {
-      throw new Error(
-        "Resource returned success without a PAYMENT-RESPONSE settlement header; refusing to treat as paid",
-      );
+    if (header) {
+      // An explicit settlement answer (success or a facilitator refusal) is authoritative,
+      // whatever the HTTP status.
+      return decodePaymentResponseHeader(header) as X402SettleResponse;
     }
 
-    const settlement = decodePaymentResponseHeader(header) as X402SettleResponse;
-    return settlement;
+    const body = res.ok ? "" : await res.text().catch(() => "");
+    const why = res.ok
+      ? "Resource returned success without a PAYMENT-RESPONSE settlement header; refusing to treat as paid"
+      : `Payment request failed (HTTP ${res.status}): ${body.slice(0, 300)}`;
+    throw signed ? unknown(why) : new Error(why);
   }
 }

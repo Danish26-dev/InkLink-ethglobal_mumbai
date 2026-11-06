@@ -43,7 +43,7 @@ import {
   verifyOnChainWithRetry,
   type DeliveryResult,
 } from "./settlement.js";
-import { X402Client } from "./x402-client.js";
+import { PaymentOutcomeUnknownError, X402Client } from "./x402-client.js";
 import { buildSpendAuditMessage, type AuditPublisher } from "./hcs-audit.js";
 import { discoverPrintJobEndpoint, quoteFromGate } from "./gate-discovery.js";
 
@@ -156,7 +156,7 @@ export class PaymentAgent {
       createdAt: now.toISOString(),
     };
     paymentStore.put(record, `offline:${input.voucherId}:${input.paymentId}`);
-    void this.runSettlement(record, payTo, input.resourceUrl);
+    this.settleInBackground(record, payTo, input.resourceUrl);
     return { paymentId: record.paymentId, status: "processing" };
   }
 
@@ -245,25 +245,24 @@ export class PaymentAgent {
     now: Date = new Date(),
   ): Promise<InitiatePaymentResponse> {
     const idemKey = idempotencyKey(req.jobId, req.quoteId, req.authorizationId);
-    const existing = paymentStore.findByIdempotency(idemKey);
-    if (existing) {
-      return {
-        paymentId: existing.paymentId,
-        status: existing.status,
-        paymentMethod: req.paymentMethod,
-      };
-    }
+    const replay = () => {
+      const existing = paymentStore.findByIdempotency(idemKey);
+      return existing
+        ? { paymentId: existing.paymentId, status: existing.status, paymentMethod: req.paymentMethod }
+        : null;
+    };
+    const early = replay();
+    if (early) return early;
 
     if (req.paymentMethod !== "hedera_x402") {
       throw new PaymentError("POLICY_VIOLATION", "Only hedera_x402 payments are handled here");
     }
-
-    const policy = authStore.get(req.authorizationId);
-    if (!policy) {
+    if (!authStore.get(req.authorizationId)) {
       throw new PaymentError("AUTHORIZATION_INVALID", "Unknown authorizationId");
     }
 
-    // Find the paid endpoint ourselves rather than trusting the caller's URL.
+    // Find the paid endpoint ourselves rather than trusting the caller's URL. This is the
+    // only await in initiate(): everything that reads or reserves state happens after it.
     let resourceUrl = req.resourceUrl;
     const discoveryOrigin = this.opts.gate?.discoveryOrigin;
     if (discoveryOrigin) {
@@ -285,8 +284,15 @@ export class PaymentAgent {
     const cfg = loadHederaConfig();
 
     // ── Everything from here to the reservation is synchronous on purpose. ──
-    // No await between the policy check and the reservation means two concurrent
-    // initiate() calls cannot both pass the total-limit check.
+    // No await between the idempotency check, the policy read and the reservation, so
+    // two concurrent initiate() calls can neither both pay the same request nor both
+    // pass the total-limit check against a stale spentToDate.
+    const again = replay();
+    if (again) return again;
+    const policy = authStore.get(req.authorizationId);
+    if (!policy) {
+      throw new PaymentError("AUTHORIZATION_INVALID", "Unknown authorizationId");
+    }
     try {
       if (toSmallestUnit(req.settlementAmount, cfg.usdcDecimals) <= 0n) throw new Error("zero");
     } catch {
@@ -347,7 +353,7 @@ export class PaymentAgent {
     paymentStore.put(record, idemKey);
 
     // Run the x402 settlement out-of-band; status is polled via Contract 7.
-    void this.runSettlement(record, payTo, resourceUrl);
+    this.settleInBackground(record, payTo, resourceUrl);
 
     return { paymentId, status: "processing", paymentMethod: req.paymentMethod };
   }
@@ -378,10 +384,26 @@ export class PaymentAgent {
     }
   }
 
+  /** Fire-and-forget settlement that can never become an unhandled rejection. */
+  private settleInBackground(record: PaymentRecord, payTo: string, resourceUrl: string) {
+    this.runSettlement(record, payTo, resourceUrl).catch((err) => {
+      // e.g. the state file could not be written. Keep the spend: the outcome is unknown.
+      console.error(
+        `[payment ${record.paymentId}] settlement aborted: ${err instanceof Error ? err.message : String(err)}`,
+      );
+      try {
+        this.fail(record, "internal_error_outcome_unknown", false);
+      } catch {
+        /* persistence is failing too; recover() resolves it on the next start */
+      }
+    });
+  }
+
   /**
-   * Phase 1: pay the gate. An error here (before any settlement response) means nothing
-   * was submitted, so the reservation is released. Phase 2 (`finalize`) starts only once
-   * a transaction id exists, after which funds may have moved.
+   * Phase 1: pay the gate. Released only when nothing was signed (probe, 402 or policy
+   * error) or the facilitator explicitly refused. Once a signed transfer has been sent,
+   * any error keeps the spend (funds may have moved). Phase 2 (`finalize`) starts once
+   * a transaction id exists.
    */
   private async runSettlement(record: PaymentRecord, payTo: string, resourceUrl: string) {
     let settlement: Awaited<ReturnType<X402Client["pay"]>>;
@@ -427,8 +449,15 @@ export class PaymentAgent {
       );
 
     } catch (err) {
-      // A thrown error before a settlement response means nothing was submitted.
-      this.fail(record, err instanceof Error ? err.message : String(err), true);
+      const reason = err instanceof Error ? err.message : String(err);
+      if (err instanceof PaymentOutcomeUnknownError) {
+        // The signed transfer reached the gate (or may have): it may have settled.
+        // Never release the spend and never let a retry pay it again.
+        this.fail(record, reason, false);
+        return;
+      }
+      // Nothing was signed (probe, 402 or policy error): no funds can have moved.
+      this.fail(record, reason, true);
       return;
     }
 

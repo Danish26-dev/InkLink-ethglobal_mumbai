@@ -357,8 +357,9 @@ Retries and double-pay protection:
 - **Same request again:** idempotent, with no second payment.
 - **Nothing was submitted** (facilitator refused, or gate or merchant not allowed): the voucher is
   `SETTLEMENT_FAILED`. Retry it with a **new** `paymentId`; the same one is `409 PAYMENT_ID_CONFLICT`.
-- **Funds may have moved** (a transaction was claimed but is unverified, or a restart interrupted
-  it): the voucher **stays `PENDING_SETTLEMENT`**, and any retry is
+- **Funds may have moved** (a transaction was claimed but is unverified, a signed transfer was
+  sent but no settlement answer came back, or a restart interrupted it): the voucher **stays
+  `PENDING_SETTLEMENT`**, and any retry is
   `409 VOUCHER_SETTLEMENT_IN_PROGRESS`. Only re-verification on the mirror node resolves it, at
   startup or when the payment is re-checked.
 - **Persistence:** the ledger file (`OFFLINE_LEDGER_FILE`, default next to `AGENT_STATE_FILE`) is
