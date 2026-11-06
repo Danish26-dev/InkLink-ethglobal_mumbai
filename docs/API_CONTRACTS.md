@@ -237,3 +237,63 @@ treat a second settlement for the same `paymentId` with a different `transaction
 The settlement asset is written three ways, as in the agreed contracts: `USDC` (Contracts 5-7 and
 the policy), `HTS-USDC` (quote `settlement.asset`), `HTS_USDC` (callback/registry). They are
 implemented exactly as written; unifying them later would be a contract change.
+
+## OfflinePay (signed offline authorization) — PROPOSED
+
+Status: core implemented and tested (`packages/shared-schemas/src/offline-pay.ts`, app signer
+`apps/mobile/src/crypto/offline-pay.ts`). The gateway and backend endpoints that carry vouchers
+are **not agreed yet**; nothing below is wired into the live flow.
+
+An offline voucher is the customer's device-signed promise to pay one job's backend-quoted USDC
+amount when the shop has no internet. It is **not a payment**. It becomes `SETTLED` only after the
+normal Hedera x402 settlement for that job is verified on the mirror node.
+
+```text
+AUTHORIZED_OFFLINE -> PENDING_SETTLEMENT -> SETTLED
+                           |      ^
+                           v      | retry
+                     SETTLEMENT_FAILED
+```
+
+Voucher (all fields signed except `signature`):
+
+```json
+{ "type": "inklink_offline_payment", "version": "1.0",
+  "voucherId": "<16 random bytes, Base64URL>", "jobId": "...", "quoteId": "...",
+  "merchantId": "shop_001", "amount": "0.10", "asset": "USDC",
+  "devicePublicKey": "<Ed25519, Base64URL>", "customerReference": "dev_<first 22 of key>",
+  "issuedAt": "ISO-8601", "expiresAt": "ISO-8601", "signature": "<Base64URL>" }
+```
+
+Signed bytes: UTF-8 of `canonicalJson(voucher without signature)` (same rules as every other
+Inklink signature; Python: `json.dumps(v, sort_keys=True, separators=(",", ":"), ensure_ascii=False)`).
+Unknown fields are rejected.
+
+Shop-side checks, in order: structure, signature, `customerReference` belongs to the key, amount
+positive and at most `maxPerVoucher`, `merchantId` is this shop, `expiresAt - issuedAt` at most
+`maxValidityMs`, `issuedAt` not in the future beyond `clockSkewMs`, not expired. Then the ledger:
+identical voucher again is idempotent, same `voucherId` with other content is `REPLAYED`, a second
+voucher for the same job is `DUPLICATE_JOB`, and the device's unsettled total may not exceed
+`maxOutstanding` (failed settlements still count; the shop is unpaid). The device runs the same
+ledger before signing, so it cannot exceed its limit across shops.
+
+Default policy (proposed): `maxPerVoucher` 2.00 USDC, `maxOutstanding` 5.00 USDC, validity 2 h,
+clock skew 5 min. The app signs vouchers valid for 30 min.
+
+Reconciliation accepts `SETTLED` only with `transactionVerified: true`, a `verifiedAt`, a Hedera
+transaction id (`0.0.x@seconds.nanos`), the same `jobId`, the same `paymentId` if one was recorded
+and exactly the voucher amount. Anything else is refused and the voucher stays pending. The same
+settlement again is idempotent; a different transaction for a settled voucher is refused. The
+ledger is persisted before each change and refuses to load a corrupt file.
+
+Test vector (device seed = 32 bytes of `0x09`, voucherId bytes = 16 bytes of `0x01`, issued
+`2026-11-06T10:00:00.000Z`, job `job_vector`, quote `quote_vector`, `shop_001`, `0.10`). Verified in
+TypeScript (noble and node:crypto) and Python (`cryptography`):
+
+```text
+signed text: {"amount":"0.10","asset":"USDC","customerReference":"dev__RckOFqgx1tk-3jNYC-h2Z","devicePublicKey":"_RckOFqgx1tk-3jNYC-h2ZH96_drE8WO1wLqyDXp9hg","expiresAt":"2026-11-06T10:30:00.000Z","issuedAt":"2026-11-06T10:00:00.000Z","jobId":"job_vector","merchantId":"shop_001","quoteId":"quote_vector","type":"inklink_offline_payment","version":"1.0","voucherId":"AQEBAQEBAQEBAQEBAQEBAQ"}
+signature:   cUvdzz9y-8K1IT0U4b89ZzSvasw9bLeTjooCpszEbDF6I3x6yHJI9J7-CP5FgsFpUQ1kE1moD6xG8qV0iDl-AQ
+```
+
+Open for agreement: the gateway endpoint that accepts a voucher offline, how the backend starts
+settlement for pending vouchers when internet returns, and the final policy limits.
