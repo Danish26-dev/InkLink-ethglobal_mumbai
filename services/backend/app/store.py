@@ -213,6 +213,8 @@ class Store:
         self.chain_outbox: list[dict[str, Any]] = []
         self.upload_keys: dict[str, dict[str, Any]] = {}
         self.consumed_tickets: dict[str, float] = {}
+        # Pairing challenges already answered -> expiry (not persisted; single instance).
+        self.used_pairing_challenges: dict[str, float] = {}
         self._dirty = False
         self._flusher: threading.Thread | None = None
         self._stop_flusher = threading.Event()

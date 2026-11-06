@@ -14,7 +14,7 @@ from app import jobs as jobs_mod
 from app.main import create_app
 from app.security import b64url_encode
 from app.store import get_store
-from tests.test_flow import CONFIG, new_job_with_pdf, pdf_bytes
+from tests.test_flow import CONFIG, fresh_challenge, new_job_with_pdf, pdf_bytes
 
 CHALLENGE = "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8"
 
@@ -30,7 +30,8 @@ def device():
     return key, pub
 
 
-def pair(client, key=None, pub=None, challenge=CHALLENGE):
+def pair(client, key=None, pub=None, challenge=None):
+    challenge = challenge or fresh_challenge()
     body = {"challenge": challenge}
     if key is not None:
         body |= {"devicePublicKey": pub, "deviceSignature": b64url_encode(key.sign(challenge.encode()))}
@@ -54,6 +55,15 @@ def test_device_key_gives_a_stable_identity_across_pairings(client):
     # Another device does not.
     other_key, other_pub = device()
     assert client.get(f"/api/v1/jobs/{job_id}", headers=native(pair(client, other_key, other_pub))).status_code == 404
+
+
+def test_a_pairing_challenge_cannot_be_replayed(client):
+    key, pub = device()
+    challenge = fresh_challenge()
+    assert pair(client, key, pub, challenge=challenge).status_code == 200
+    replay = pair(client, key, pub, challenge=challenge)
+    assert replay.status_code == 409 and replay.json()["error"]["code"] == "AUTHORIZATION_REPLAYED"
+    assert pair(client, key, pub).status_code == 200   # a new challenge pairs normally
 
 
 def test_bad_device_signature_is_refused_and_legacy_pairing_still_works(client):

@@ -60,7 +60,9 @@ if (( DEPLOY_PAYMENTS )); then
   step "3/4 ${SVC_GATE} (public x402 paywall)"
   reset_service_vars
   S_NAME="${SVC_GATE}"; S_SA="${SA_GATE}"; S_IMAGE="${REGISTRY}/payment-agent:${TAG}"
-  S_PORT=4022; S_MIN=0; S_MAX=2; S_MEMORY=512Mi; S_TIMEOUT=120
+  # min 1: a cold start (~10 s) outlasts the payment agent's discovery timeout, so the first
+  # payment after idle would fail. Kept warm, like the agent itself.
+  S_PORT=4022; S_MIN=1; S_MAX=2; S_MEMORY=512Mi; S_TIMEOUT=120
   S_COMMAND='["npm"]'; S_ARGS='["run", "gate"]'
   S_ENV=(
     "NODE_ENV=production"

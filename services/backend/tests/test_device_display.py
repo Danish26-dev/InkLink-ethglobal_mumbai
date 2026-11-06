@@ -15,7 +15,7 @@ from app import config
 from app import routes_native
 from app.main import create_app
 from app.store import get_store
-from tests.test_flow import SHOP, new_job_with_pdf, printer, request_execution, settle, web_session  # noqa: F401
+from tests.test_flow import SHOP, fresh_challenge, new_job_with_pdf, printer, request_execution, settle, web_session  # noqa: F401
 
 DEVICE = {"authorization": "Bearer test-device-token"}
 TX = "0.0.7162784@1793967953.517115964"
@@ -54,7 +54,7 @@ def paying(client, printer, monkeypatch):  # noqa: F811
     request_execution(client, job_id)
     quote = client.post(f"/api/v1/jobs/{job_id}/quote", headers=hdr).json()
     handoff = client.post(f"/api/v1/jobs/{job_id}/quote/approve", headers=hdr).json()
-    pair = client.post("/api/v1/pairing/verify", json={"challenge": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8"}).json()
+    pair = client.post("/api/v1/pairing/verify", json={"challenge": fresh_challenge()}).json()
     native = {"authorization": f"Bearer {pair['sessionToken']}"}
     client.post("/api/v1/payment-handoffs/claim", json={"handoffToken": handoff["handoffToken"]}, headers=native)
 

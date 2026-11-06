@@ -14,7 +14,7 @@ from app import routes_native, routes_shop
 from app.clients import ServiceError
 from app.main import create_app
 from app.store import get_store
-from tests.test_flow import SHOP, new_job_with_pdf, printer, request_execution, settle, web_session  # noqa: F401
+from tests.test_flow import SHOP, fresh_challenge, new_job_with_pdf, printer, request_execution, settle, web_session  # noqa: F401
 
 DISCOVERY = {"ok": True, "defaultPrinter": "HP Office", "printers": [
     {"id": "HP Office", "name": "HP Office", "status": "online", "isDefault": True},
@@ -136,7 +136,7 @@ def _pay(client, monkeypatch, job_id, quote_id, handoff_token, pid="payment_1"):
         return 200, {"status": "processing"}
 
     monkeypatch.setattr(routes_native, "call_payment_agent", fake_agent)
-    pair = client.post("/api/v1/pairing/verify", json={"challenge": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8"}).json()
+    pair = client.post("/api/v1/pairing/verify", json={"challenge": fresh_challenge()}).json()
     native = {"authorization": f"Bearer {pair['sessionToken']}"}
     client.post("/api/v1/payment-handoffs/claim", json={"handoffToken": handoff_token}, headers=native)
     return client.post("/api/v1/payments", json={"jobId": job_id, "quoteId": quote_id, "authorizationId": "auth_1",

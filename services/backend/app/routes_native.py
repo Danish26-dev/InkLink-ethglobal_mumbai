@@ -58,6 +58,17 @@ async def pairing_verify(body: PairingIn, request: Request) -> dict[str, Any]:
         raise api_error(400, "PAIRING_FAILED", "challenge must be a Base64URL string (16-256 chars)")
     s = get_settings()
     identity = request.app.state.identity
+    # A challenge is single-use for the session lifetime: replaying a captured handshake
+    # can never mint another session. (In memory: the backend is a single instance.)
+    store = get_store()
+    now = time.time()
+    with store.lock:
+        for k, exp in list(store.used_pairing_challenges.items()):
+            if exp <= now:
+                del store.used_pairing_challenges[k]
+        if c in store.used_pairing_challenges:
+            raise api_error(409, "AUTHORIZATION_REPLAYED", "This pairing challenge was already used. Pair again with a new one.")
+        store.used_pairing_challenges[c] = now + s.native_session_ttl_seconds
     ref = _native_ref(body)
     token, expires = issue_session("native", ref, s.native_session_ttl_seconds)
     return {

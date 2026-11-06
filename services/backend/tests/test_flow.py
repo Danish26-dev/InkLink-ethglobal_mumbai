@@ -22,6 +22,14 @@ from app.main import create_app
 from app.security import callback_signature, hashscan_for
 from app.store import get_store
 
+
+def fresh_challenge() -> str:
+    import secrets
+
+    from app.security import b64url_encode
+
+    return b64url_encode(secrets.token_bytes(32))
+
 SHOP = {"authorization": "Bearer test-shop-admin-token"}
 AGENT = {"authorization": "Bearer test-agent-service-token"}
 CONFIG = {
@@ -242,7 +250,7 @@ def test_full_flow_prints_only_after_every_gate(client, printer, monkeypatch):
     assert handoff["deepLink"].startswith("inklink://pay?handoff=")
 
     # Native app pairs, claims the handoff, pays.
-    pair = client.post("/api/v1/pairing/verify", json={"challenge": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8"}).json()
+    pair = client.post("/api/v1/pairing/verify", json={"challenge": fresh_challenge()}).json()
     native = {"authorization": f"Bearer {pair['sessionToken']}"}
     claim = client.post("/api/v1/payment-handoffs/claim", json={"handoffToken": handoff["handoffToken"]}, headers=native)
     assert claim.status_code == 200 and claim.json()["jobId"] == job_id
@@ -283,7 +291,7 @@ def test_handoff_cannot_be_claimed_by_a_second_device(client, printer):
     token = client.post(f"/api/v1/jobs/{job_id}/quote/approve", headers=hdr).json()["handoffToken"]
     devices = []
     for _ in range(2):
-        p = client.post("/api/v1/pairing/verify", json={"challenge": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8"}).json()
+        p = client.post("/api/v1/pairing/verify", json={"challenge": fresh_challenge()}).json()
         devices.append({"authorization": f"Bearer {p['sessionToken']}"})
     assert client.post("/api/v1/payment-handoffs/claim", json={"handoffToken": token}, headers=devices[0]).status_code == 200
     assert client.post("/api/v1/payment-handoffs/claim", json={"handoffToken": token}, headers=devices[1]).status_code == 409
