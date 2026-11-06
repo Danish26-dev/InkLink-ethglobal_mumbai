@@ -19,8 +19,9 @@ import {
   customerReferenceFor,
   type AuthorizePaymentRequest,
 } from "@inklink/shared-schemas";
+import { buildDeviceProof, type DeviceProof } from "../discovery/pairing";
 import { buildSignedAuthorization, type AuthorizationFields } from "./authorization";
-import { publicKeyFor } from "./ed25519";
+import { publicKeyFor, signMessage } from "./ed25519";
 
 const STORAGE_KEY = "inklink.device.ed25519";
 
@@ -73,6 +74,15 @@ export async function signPaymentAuthorization(
   fields: AuthorizationFields,
 ): Promise<AuthorizePaymentRequest> {
   return buildSignedAuthorization(await secretKey(), fields, Crypto.getRandomBytes(16));
+}
+
+/**
+ * Prove this install to the shop during pairing: sign the app's own pairing challenge with
+ * the device key. Refuses anything that is not an app-generated challenge.
+ */
+export async function proveDeviceForPairing(challenge: string): Promise<DeviceProof> {
+  const key = await secretKey();
+  return buildDeviceProof(challenge, (m) => signMessage(m, key), publicKeyFor(key));
 }
 
 /** Fresh random challenge for the pairing handshake (Base64URL, 32 bytes). */

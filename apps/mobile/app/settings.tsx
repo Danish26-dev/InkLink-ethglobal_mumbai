@@ -10,7 +10,7 @@ import { db, type PairedShopRow } from "@/db/database";
 import { useApp } from "@/state/app-context";
 
 export default function Settings() {
-  const { api } = useApp();
+  const { api, customerReference: shopIdentity } = useApp();
   const [shops, setShops] = useState<PairedShopRow[]>([]);
   const [identity, setIdentity] = useState<DeviceIdentity | null>(null);
 
@@ -26,6 +26,7 @@ export default function Settings() {
       <Card>
         <Text style={type.heading}>This device</Text>
         <Row k="Customer ref" v={identity?.customerReference ?? "…"} />
+        <Row k="Shop identity" v={shopIdentity ?? "Not paired yet"} />
         <Row k="Device key" v={identity ? publicKeyFingerprint(identity.devicePublicKey) : "…"} />
         <Row k="Agent ID" v={appConfig.agentId} />
         <Row k="Gateway" v={api.isConfigured ? api.origin : "not connected"} />

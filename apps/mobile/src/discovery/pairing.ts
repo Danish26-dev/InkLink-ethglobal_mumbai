@@ -28,7 +28,36 @@ export class PairingError extends Error {
 export interface PairingSession {
   sessionToken: string;
   sessionExpiresAt: string;
+  /** Stable `native_dev_…` id the backend derives from the proven device key (if sent). */
+  customerReference?: string;
 }
+
+/** The device's proof that this is the same install: its key and a signature over the challenge. */
+export interface DeviceProof {
+  devicePublicKey: string;
+  deviceSignature: string;
+}
+
+/** A pairing challenge the app generated: exactly 32 random bytes, Base64URL (43 chars). */
+const APP_CHALLENGE = /^[A-Za-z0-9_-]{43}$/;
+
+/**
+ * Sign a pairing challenge with the device key. The same key signs payment budgets and
+ * offline vouchers, so it only ever signs a challenge of the app's own random format, never
+ * text chosen by someone else (a "challenge" that is really a payment would be refused).
+ */
+export function buildDeviceProof(
+  challenge: string,
+  sign: (message: string) => string,
+  devicePublicKey: string,
+): DeviceProof {
+  if (!APP_CHALLENGE.test(challenge)) {
+    throw new PairingError("PAIRING_FAILED", "Refusing to sign something that is not an app-generated pairing challenge");
+  }
+  return { devicePublicKey, deviceSignature: sign(challenge) };
+}
+
+const CUSTOMER_REF = /^native_dev_[0-9a-f]{8,64}$/;
 
 function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
   return Promise.race([
@@ -65,6 +94,7 @@ export async function runHandshake(
   qr: PinnedShopKey,
   challenge: string,
   fetchImpl: typeof fetch = fetch,
+  device?: DeviceProof,
 ): Promise<PairingSession> {
   let res: Response;
   try {
@@ -72,7 +102,7 @@ export async function runHandshake(
       fetchImpl(`${origin}/api/v1/pairing/verify`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ challenge }),
+        body: JSON.stringify(device ? { challenge, ...device } : { challenge }),
       }),
       5000,
     );
@@ -107,5 +137,33 @@ export async function runHandshake(
   ) {
     throw new PairingError("PAIRING_FAILED", "The gateway did not issue a valid session");
   }
-  return { sessionToken: body.sessionToken, sessionExpiresAt: body.sessionExpiresAt };
+  if (body.customerReference !== undefined && (typeof body.customerReference !== "string" || !CUSTOMER_REF.test(body.customerReference))) {
+    throw new PairingError("PAIRING_FAILED", "The gateway returned an invalid customer reference");
+  }
+  return {
+    sessionToken: body.sessionToken,
+    sessionExpiresAt: body.sessionExpiresAt,
+    ...(body.customerReference ? { customerReference: body.customerReference as string } : {}),
+  };
+}
+
+/**
+ * Handshake that also proves the device key, so the backend keeps the same customer identity
+ * across pairings and session renewals. If an identity is already known, a renewal that
+ * returns a different one is refused (the app would lose access to its own jobs).
+ */
+export async function handshakeWithDevice(
+  origin: string,
+  qr: PinnedShopKey,
+  challenge: string,
+  proveDevice: (challenge: string) => Promise<DeviceProof> | DeviceProof,
+  knownCustomerReference?: string,
+  fetchImpl: typeof fetch = fetch,
+): Promise<PairingSession> {
+  const proof = await proveDevice(challenge);
+  const session = await runHandshake(origin, qr, challenge, fetchImpl, proof);
+  if (knownCustomerReference && session.customerReference && session.customerReference !== knownCustomerReference) {
+    throw new PairingError("PAIRING_FAILED", "The shop returned a different customer identity for this device");
+  }
+  return session;
 }

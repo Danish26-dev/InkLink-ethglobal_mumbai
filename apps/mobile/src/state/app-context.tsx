@@ -15,14 +15,14 @@ import type {
 import { InklinkApi } from "@/api/client";
 import { appConfig } from "@/config";
 import { ConnectionManager } from "@/connection/connection-state";
-import { newPairingChallenge } from "@/crypto/device-key";
+import { newPairingChallenge, proveDeviceForPairing } from "@/crypto/device-key";
 import { publicKeyFingerprint } from "@/crypto/ed25519";
 import { db } from "@/db/database";
 import {
   PairingError,
   type PinnedShopKey,
+  handshakeWithDevice,
   pickReachableOrigin,
-  runHandshake,
 } from "@/discovery/pairing";
 import { gatewayCandidates, validateScannedQr } from "@/discovery/qr";
 import { DEFAULT_PRINT_CONFIG } from "@/print-options";
@@ -58,6 +58,11 @@ interface AppContextValue {
   pair: (qrText: string) => Promise<PairedShop>;
   /** Reconnect to a previously paired shop using its pinned key (no QR needed). */
   reconnect: (shopId: string) => Promise<PairedShop>;
+  /**
+   * The backend's stable `native_dev_…` identity for this install, once pairing proved the
+   * device key. Undefined against a gateway that does not support device proofs.
+   */
+  customerReference?: string;
 }
 
 const AppContext = createContext<AppContextValue | null>(null);
@@ -67,6 +72,19 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const connectionRef = useRef(new ConnectionManager());
   /** The verified shop key + address, kept so an expired session can be renewed. */
   const pairingRef = useRef<{ qr: PinnedShopKey; origin: string } | null>(null);
+  /** Stable backend identity for this install (same on every pairing and renewal). */
+  const customerRefRef = useRef<string | undefined>(undefined);
+  const [customerReference, setCustomerReference] = useState<string | undefined>(undefined);
+
+  /** Pair while proving the device key; keeps (and checks) the stable customer identity. */
+  const handshake = async (origin: string, pinned: PinnedShopKey) => {
+    const s = await handshakeWithDevice(origin, pinned, newPairingChallenge(), proveDeviceForPairing, customerRefRef.current);
+    if (s.customerReference && s.customerReference !== customerRefRef.current) {
+      customerRefRef.current = s.customerReference;
+      setCustomerReference(s.customerReference);
+    }
+    return s;
+  };
 
   if (!apiRef.current) {
     const api = new InklinkApi();
@@ -74,7 +92,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       const p = pairingRef.current;
       if (!p) return false;
       try {
-        const s = await runHandshake(p.origin, p.qr, newPairingChallenge());
+        const s = await handshake(p.origin, p.qr);
         api.setSession({ token: s.sessionToken, expiresAt: s.sessionExpiresAt });
         return true;
       } catch {
@@ -106,10 +124,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           );
         }
 
-        const handshake = await runHandshake(origin, qr, newPairingChallenge());
+        const paired0 = await handshake(origin, qr);
 
         api.configure(origin);
-        api.setSession({ token: handshake.sessionToken, expiresAt: handshake.sessionExpiresAt });
+        api.setSession({ token: paired0.sessionToken, expiresAt: paired0.sessionExpiresAt });
         pairingRef.current = { qr, origin };
 
         const paired: PairedShop = {
@@ -155,9 +173,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
             "Could not reach the shop gateway. Is your phone on the shop's Wi-Fi?",
           );
         }
-        let handshake;
+        let renewed;
         try {
-          handshake = await runHandshake(origin, pinned, newPairingChallenge());
+          renewed = await handshake(origin, pinned);
         } catch (e) {
           if (e instanceof PairingError && e.code === "SIGNATURE_INVALID") {
             throw new PairingError(
@@ -169,7 +187,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         }
 
         api.configure(origin);
-        api.setSession({ token: handshake.sessionToken, expiresAt: handshake.sessionExpiresAt });
+        api.setSession({ token: renewed.sessionToken, expiresAt: renewed.sessionExpiresAt });
         pairingRef.current = { qr: pinned, origin };
 
         const paired: PairedShop = {
@@ -190,8 +208,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         setSession((s) => ({ ...s, shop: paired }));
         return paired;
       },
+      customerReference,
     }),
-    [api, session],
+    [api, session, customerReference],
   );
 
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>;

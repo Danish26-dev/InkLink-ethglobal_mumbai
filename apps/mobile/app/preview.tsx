@@ -12,7 +12,7 @@ import { COLOUR_OPTIONS, ORIENTATION_OPTIONS, SIDES_OPTIONS, labelFor } from "@/
 
 export default function Preview() {
   const router = useRouter();
-  const { session, updateSession, api } = useApp();
+  const { session, updateSession, api, customerReference: backendCustomerRef } = useApp();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [step, setStep] = useState<string>("");
@@ -40,8 +40,9 @@ export default function Preview() {
 
       // Contract 2 — upload the document against that jobId (idempotent).
       setStep("Transferring document…");
-      // Anonymous per-install id derived from the device key: no personal data.
-      const { customerReference } = await getDeviceIdentity();
+      // Anonymous per-install id: the backend's stable identity once pairing proved the device
+      // key, else the one derived locally from the same key. No personal data either way.
+      const customerReference = backendCustomerRef ?? (await getDeviceIdentity()).customerReference;
       const controller = new AbortController();
       abortRef.current = controller;
       setProgress(0);
