@@ -5,8 +5,8 @@ Each module is testable on its own, with no hardware and no funded wallet.
 ## Unit and interop tests
 
 ```bash
-cd services/payment-agent && npm test      # 100 tests
-cd apps/mobile            && npm test      # 39 tests
+cd services/payment-agent && npm test      # 106 tests
+cd apps/mobile            && npm test      # 74 tests
 cd services/mock-gateway  && npm test      # 11 tests
 ```
 
@@ -35,6 +35,19 @@ What the tests pin down:
   authorization signatures are pinned on both sides.
 - **Discovery:** valid/expired/tampered/wrong-key/non-local QRs, handshake impostors and replays,
   IPv4-vs-mDNS probing.
+- **Device-proof pairing:** the device key signs only an app-generated 32-byte challenge; a fake
+  gateway mirroring `services/backend/app/routes_native.py` verifies it and derives the stable
+  `native_dev_` identity; forged proofs, identity changes and gateways without proof support.
+- **OfflinePay:** voucher signature (noble signs, Node verifies), limits, expiry, replay, duplicates,
+  persistence, and the agent settle endpoint's states (no retry once funds may have moved).
+- **x402 endpoint discovery:** the gate's Bazaar discovery document, the agent picking the endpoint
+  itself and refusing a 402 price that differs from the quote (`gate_price_mismatch`).
+- **HCS spend audit:** entry contents, retry of unpublished entries on recovery.
+- **Configuration:** the service refuses to start on missing or short (<16 chars) secrets; gate
+  allowlist parsing; agent and merchant wallets must differ.
+
+Not covered by automated tests: the Express route wiring in `services/payment-agent/src/server.ts`
+(the logic behind each route is tested directly).
 
 ## Headless end-to-end (real client code, mock backend)
 
@@ -50,7 +63,8 @@ cd apps/mobile && PAYMENT_EVENT_SIGNING_SECRET=… MERCHANT_ACCOUNT_ID=… npm r
 24 checks across pairing, signed authorization, the payment path and the callback receiver (forged,
 tampered, wrong amount, duplicate). Without a funded wallet the payment ends `failed` at the
 facilitator by design; the callback cases use synthetic, shared-secret-signed events and are clearly
-**not** real payments.
+**not** real payments. The mock gateway has no device-proof support, so the headless flow pairs
+without it (the device-proof path is covered by `apps/mobile/test/pairing-device.test.ts`).
 
 ## Real settlement (needs a funded wallet)
 
@@ -62,8 +76,10 @@ npm run demo:pay                     # device-signed authorization -> pay -> set
 npm run demo:pay -- --negative       # overpay attempt: refused, nothing signed
 ```
 
-`demo:pay` only reports success if the mirror node shows the USDC transfer to the merchant. **A real
-funded settlement has not been run yet.**
+`demo:pay` only reports success if the mirror node shows the USDC transfer to the merchant. Real
+testnet settlements have been run this way; the transaction ids and the HCS audit topic are listed
+in the Hedera x402 section of the root `README.md`. A payment started from the app against the
+cloud backend has not been confirmed yet.
 
 ## Mobile app on a device
 
