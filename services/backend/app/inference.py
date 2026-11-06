@@ -134,8 +134,10 @@ async def chat_completions(request: Request):
         _log(grant.job_id, {**entry, "ok": False, "errorCode": exc.code})
         return _openai_error(exc.status, exc.code, exc.message)
 
+    att = result.attestation or {}
     _log(grant.job_id, {**entry, "ok": True, "provider": result.provider, "requestId": result.request_id,
-                        "teeVerified": result.tee_verified})
+                        "teeVerified": result.tee_verified, "verification": result.verification,
+                        "teeType": att.get("tee_type"), "teeVerifier": att.get("tee_verifier")})
     if body.get("stream"):
         return StreamingResponse(_sse(result.body), media_type="text/event-stream", headers={"cache-control": "no-cache"})
     return JSONResponse(result.body)

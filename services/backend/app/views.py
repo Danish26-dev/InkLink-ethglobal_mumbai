@@ -70,7 +70,8 @@ def privacy_view(job: JobRecord) -> dict[str, Any]:
         "inferenceCalls": len(job.inference_log),
         "lastInference": None
         if not last
-        else {k: last.get(k) for k in ("at", "trustMode", "model", "ok", "provider", "requestId", "teeVerified", "errorCode")},
+        else {k: last.get(k) for k in ("at", "trustMode", "model", "ok", "provider", "requestId", "teeVerified",
+                                       "verification", "teeType", "teeVerifier", "errorCode")},
     }
 
 

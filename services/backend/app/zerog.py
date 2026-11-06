@@ -144,6 +144,51 @@ def check_model(models: dict[str, dict[str, Any]], model: str, mode: str, *, nee
         raise ZeroGError("ZERO_G_MODEL_NO_TOOLS", f'Model "{model}" does not support tool calling, which the print operator needs.', 400)
 
 
+_providers: dict[str, Any] = {"at": 0.0, "by_address": {}}
+
+
+async def providers(force: bool = False) -> dict[str, list[dict[str, Any]]]:
+    """Router-published provider records (public), keyed by lower-case on-chain address.
+
+    Each record carries the provider's `trust_mode`, `verifiability`,
+    `tee_attested`, `tee_type` and `tee_verifier` as published by 0G.
+    """
+    s = get_settings()
+    if not force and _providers["by_address"] and time.time() - _providers["at"] < s.zero_g_catalog_ttl_seconds:
+        return _providers["by_address"]
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            res = await client.get(f"{s.zero_g_base_url}/providers")
+            data = res.json()
+    except (httpx.HTTPError, ValueError) as exc:
+        raise ZeroGError("ZERO_G_PROVIDERS_UNAVAILABLE", "The 0G provider list is not reachable, so the serving provider's attestation cannot be checked.", 503, True) from exc
+    if res.status_code != 200 or not isinstance(data, dict):
+        raise ZeroGError("ZERO_G_PROVIDERS_UNAVAILABLE", f"The 0G provider list returned {res.status_code}.", 503, True)
+    by: dict[str, list[dict[str, Any]]] = {}
+    for p in data.get("data", []):
+        if isinstance(p, dict) and p.get("address"):
+            by.setdefault(str(p["address"]).lower(), []).append(p)
+    _providers.update(at=time.time(), by_address=by)
+    return by
+
+
+def provider_attestation(records: list[dict[str, Any]], model: str, mode: str) -> dict[str, Any] | None:
+    """The serving provider's published record for `model`, if it qualifies for `mode`; else None."""
+    allowed = _TIER_VERIFIABILITY[mode]
+    for p in records:
+        if model not in (p.get("model_id"), p.get("canonical_id")):
+            continue
+        tier = p.get("trust_mode")
+        if tier not in _RANK or _RANK[tier] < _RANK[mode]:
+            continue
+        if allowed is not None and p.get("verifiability") not in allowed:
+            continue
+        if p.get("tee_attested") is not True:
+            continue
+        return {k: p.get(k) for k in ("address", "trust_mode", "verifiability", "tee_attested", "tee_type", "tee_verifier", "provider_name")}
+    return None
+
+
 async def preflight(mode: str, *, needs_tools: bool = True) -> str:
     """Confirm key + model + tier before any document content is sent. Returns the model id."""
     key_for(mode)
@@ -164,6 +209,11 @@ class InferenceResult:
     provider: str | None
     request_id: str | None
     tee_verified: bool | None
+    # "tee_signature_verified" (router verified the TEE signature),
+    # "provider_attested" (serving provider is published by 0G as attested at
+    # this tier; the per-response signature was not reported), or "none" (standard).
+    verification: str = "none"
+    attestation: dict[str, Any] | None = None
 
 
 _ERROR_MESSAGES = {
@@ -250,18 +300,35 @@ async def chat_completion(mode: str, model: str, body: dict[str, Any]) -> Infere
     trace = trace if isinstance(trace, dict) else {}
     tee = trace.get("tee_verified")
     tee_verified = tee if isinstance(tee, bool) else None
-    if verify and s.zero_g_require_tee_verification and tee_verified is not True:
-        raise ZeroGError(
-            "ZERO_G_TEE_VERIFICATION_FAILED" if tee_verified is False else "ZERO_G_TEE_VERIFICATION_MISSING",
-            f"The {mode} response could not be confirmed by 0G TEE verification "
-            f"(tee_verified={'false' if tee_verified is False else 'absent'}); the output was discarded.",
-            502,
-        )
+    provider = str(trace["provider"]) if trace.get("provider") else None
+    verification, attestation = "none", None
+    if verify:
+        if tee_verified is False:
+            # A signature was present and did not verify: never use this output.
+            raise ZeroGError("ZERO_G_TEE_VERIFICATION_FAILED",
+                             f"0G reported that the {mode} response's TEE signature did not verify; the output was discarded.", 502)
+        if tee_verified is True:
+            verification = "tee_signature_verified"
+        elif s.zero_g_require_tee_verification:
+            # The router did not report a per-response result. Require the provider that
+            # actually served the call to be published by 0G as attested at this tier.
+            records = (await providers()).get((provider or "").lower(), [])
+            attestation = provider_attestation(records, model, mode)
+            if attestation is None:
+                raise ZeroGError(
+                    "ZERO_G_PROVIDER_NOT_ATTESTED",
+                    f"The {mode} response came from a provider ({provider or 'unknown'}) that 0G does not publish as attested "
+                    f"for {mode} inference with {model}; the output was discarded.",
+                    502,
+                )
+            verification = "provider_attested"
     return InferenceResult(
         body=data,
         trust_mode=mode,
         model=model,
-        provider=str(trace["provider"]) if trace.get("provider") else None,
+        provider=provider,
         request_id=str(trace["request_id"]) if trace.get("request_id") else res.headers.get("ZG-Res-Key"),
         tee_verified=tee_verified,
+        verification=verification,
+        attestation=attestation,
     )

@@ -40,12 +40,23 @@ CATALOG = {
 }
 
 
-def completion(tee: bool | None = True, tool_call: bool = False) -> dict:
+# What 0G publishes at GET /v1/providers (shape taken from the live router).
+PROVIDERS = {
+    "data": [
+        {"address": "0xprovider", "model_id": "glm-5.3", "canonical_id": "glm-5.3", "trust_mode": "private",
+         "verifiability": "TeeML", "tee_attested": True, "tee_type": "TDX", "tee_verifier": "dstack"},
+        {"address": "0xtls", "model_id": "glm-5.3", "canonical_id": "glm-5.3", "trust_mode": "verified",
+         "verifiability": "TeeTLS", "tee_attested": True, "tee_type": "TDX", "tee_verifier": "dstack"},
+    ]
+}
+
+
+def completion(tee: bool | None = True, tool_call: bool = False, provider: str = "0xprovider") -> dict:
     msg: dict = {"role": "assistant", "content": "ok"}
     if tool_call:
         msg = {"role": "assistant", "content": None, "tool_calls": [
             {"id": "call_1", "type": "function", "function": {"name": "set_copies", "arguments": "{\"copies\": 2}"}}]}
-    trace = {"request_id": "req_1", "provider": "0xprovider"}
+    trace = {"request_id": "req_1", "provider": provider}
     if tee is not None:
         trace["tee_verified"] = tee
     return {"id": "chatcmpl-1", "object": "chat.completion", "created": 1, "model": "glm-5.3",
@@ -66,6 +77,7 @@ def settings(monkeypatch):
         return s
 
     zerog._catalog.update(at=0.0, models={})
+    zerog._providers.update(at=0.0, by_address={})
     return apply
 
 
@@ -77,6 +89,8 @@ def router(monkeypatch):
     def handler(req: httpx.Request) -> httpx.Response:
         if req.url.path.endswith("/models"):
             return httpx.Response(200, json=CATALOG)
+        if req.url.path.endswith("/providers"):
+            return httpx.Response(200, json=PROVIDERS)
         body = json.loads(req.content or b"{}")
         state["calls"].append({"auth": req.headers.get("authorization"), "mode": req.headers.get("x-0g-provider-trust-mode"), "body": body})
         return state["reply"](req)
@@ -192,13 +206,36 @@ def test_body_routing_overrides_are_stripped(settings, router):
     assert "provider" not in body and body["model"] == "glm-5.3"
 
 
-def test_unverified_tee_response_is_discarded(settings, router):
+def test_failed_tee_signature_is_discarded(settings, router):
     settings(zero_g_keys=KEYS)
-    for tee in (False, None):
-        router["reply"] = lambda req, tee=tee: httpx.Response(200, json=completion(tee=tee))
-        with pytest.raises(zerog.ZeroGError) as exc:
-            run(zerog.chat_completion("verified", "glm-5.3", {"messages": [{"role": "user", "content": "x"}]}))
-        assert exc.value.code.startswith("ZERO_G_TEE_VERIFICATION")
+    router["reply"] = lambda req: httpx.Response(200, json=completion(tee=False))
+    with pytest.raises(zerog.ZeroGError) as exc:
+        run(zerog.chat_completion("verified", "glm-5.3", {"messages": [{"role": "user", "content": "x"}]}))
+    assert exc.value.code == "ZERO_G_TEE_VERIFICATION_FAILED"
+
+
+def test_absent_tee_result_requires_a_published_attested_provider(settings, router):
+    """The live router omits tee_verified; the serving provider must be attested at the tier."""
+    settings(zero_g_keys=KEYS)
+    msgs = {"messages": [{"role": "user", "content": "x"}]}
+    # Attested private TeeML provider: accepted, recorded as provider_attested (never as signature-verified).
+    router["reply"] = lambda req: httpx.Response(200, json=completion(tee=None, provider="0xPROVIDER"))
+    r = run(zerog.chat_completion("private", "glm-5.3", msgs))
+    assert r.verification == "provider_attested" and r.tee_verified is None and r.attestation["tee_type"] == "TDX"
+    # A TeeTLS provider qualifies for verified but never for private.
+    router["reply"] = lambda req: httpx.Response(200, json=completion(tee=None, provider="0xtls"))
+    assert run(zerog.chat_completion("verified", "glm-5.3", msgs)).verification == "provider_attested"
+    with pytest.raises(zerog.ZeroGError) as exc:
+        run(zerog.chat_completion("private", "glm-5.3", msgs))
+    assert exc.value.code == "ZERO_G_PROVIDER_NOT_ATTESTED"
+    # Unknown provider: discarded.
+    router["reply"] = lambda req: httpx.Response(200, json=completion(tee=None, provider="0xunknown"))
+    with pytest.raises(zerog.ZeroGError) as exc:
+        run(zerog.chat_completion("private", "glm-5.3", msgs))
+    assert exc.value.code == "ZERO_G_PROVIDER_NOT_ATTESTED"
+    # Router-verified signature is reported as such.
+    router["reply"] = lambda req: httpx.Response(200, json=completion(tee=True))
+    assert run(zerog.chat_completion("private", "glm-5.3", msgs)).verification == "tee_signature_verified"
 
 
 # ───────────── 6. model / trust-mode compatibility ─────────────
