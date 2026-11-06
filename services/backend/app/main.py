@@ -101,7 +101,7 @@ def create_app() -> FastAPI:
     return app
 
 
-_PWA_PREFIXES = ("app", "shop", "demo")
+_PWA_PREFIXES = ("app", "shop", "demo", "portal", "jury")
 
 
 def mount_frontends(app: FastAPI, s) -> None:

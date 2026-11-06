@@ -2,9 +2,10 @@ import { useEffect, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { Loader2, MonitorPlay } from 'lucide-react';
 import type { JobView } from '@inklink/shared-schemas';
-import { api, ApiError, errorMessage } from '../lib/api';
+import { api, errorMessage } from '../lib/api';
 import { Workspace } from '../workspace/Workspace';
 import { Logo } from '../components/Logo';
+import { useShopSession } from './useShopSession';
 
 /**
  * /shop/agent[/:jobId] — the autonomous Agent Workspace for the shopkeeper.
@@ -13,25 +14,24 @@ import { Logo } from '../components/Logo';
 export function ShopAgentPage() {
   const { jobId } = useParams<{ jobId: string }>();
   const navigate = useNavigate();
+  const { session, handleAuthError } = useShopSession();
   const [jobs, setJobs] = useState<JobView[] | null>(null);
-  const [error, setError] = useState<{ text: string; auth: boolean } | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    const load = () =>
-      api.shop.jobs().then(setJobs, (e) =>
-        setError({ text: errorMessage(e), auth: e instanceof ApiError && (e.status === 401 || e.status === 403) }),
-      );
+    if (!session) return;
+    const load = () => api.shop.jobs().then(setJobs, (e) => { if (!handleAuthError(e)) setError(errorMessage(e)); });
     void load();
     const t = setInterval(load, 8000);
     return () => clearInterval(t);
-  }, []);
+  }, [session, handleAuthError]);
 
   if (error && !jobs) {
     return (
       <div className="flex h-full flex-col items-center justify-center gap-3 p-6 text-center">
         <Logo to="/shop" />
-        <p className="text-sm text-signal" role="alert">{error.text}</p>
-        {error.auth && <Link to="/shop" className="btn-primary">Unlock the shop dashboard</Link>}
+        <p className="text-sm text-signal" role="alert">{error}</p>
+        <Link to="/shop" className="btn-ghost">Back to the dashboard</Link>
       </div>
     );
   }

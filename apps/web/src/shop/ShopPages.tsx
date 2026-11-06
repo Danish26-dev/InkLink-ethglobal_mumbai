@@ -63,7 +63,7 @@ export function ShopOverviewPage() {
   );
 }
 
-function StatusCard({ title, ok, value, detail }: { title: string; ok: boolean; value: string; detail: string }) {
+export function StatusCard({ title, ok, value, detail }: { title: string; ok: boolean; value: string; detail: string }) {
   return (
     <div className="card p-4">
       <p className="label-mono">{title}</p>
@@ -124,8 +124,9 @@ export function ShopOrdersPage() {
   );
 }
 
-function OrdersTable({ jobs, compact, onApprove, onComplete }: {
+export function OrdersTable({ jobs, compact, onApprove, onComplete, agentHref }: {
   jobs: JobView[] | null; compact?: boolean; onApprove?: (id: string) => void; onComplete?: (id: string) => void;
+  agentHref?: (jobId: string) => string;
 }) {
   if (!jobs) return <Loader2 className="h-5 w-5 animate-spin text-graphite" />;
   if (jobs.length === 0) return <p className="card p-6 text-sm text-graphite">No orders yet.</p>;
@@ -187,7 +188,7 @@ function OrdersTable({ jobs, compact, onApprove, onComplete }: {
                 )}
                 <td className="px-4 py-3">
                   <div className="flex flex-col items-end gap-2">
-                    <Link to={`/shop/agent/${j.jobId}`} className="btn-ghost px-2.5 py-1.5 text-xs">
+                    <Link to={agentHref ? agentHref(j.jobId) : `/shop/agent/${j.jobId}`} className="btn-ghost px-2.5 py-1.5 text-xs">
                       <MonitorPlay className="h-3.5 w-3.5" aria-hidden="true" />Workspace
                     </Link>
                     {onApprove && !j.shopApproved && !['completed', 'cancelled', 'failed'].includes(j.status) && (
@@ -207,7 +208,7 @@ function OrdersTable({ jobs, compact, onApprove, onComplete }: {
   );
 }
 
-function StatusPill({ status }: { status: JobView['status'] }) {
+export function StatusPill({ status }: { status: JobView['status'] }) {
   const tone =
     status === 'completed' ? 'bg-emerald-100 text-emerald-800'
       : status === 'executing' ? 'bg-ink text-paper'
@@ -254,6 +255,7 @@ export function ShopHardwarePage() {
           {!adapter.reachable && <span className="text-signal">{adapter.error}</span>}
         </div>
       )}
+      {data && <DevicesCard data={data} />}
       {data && data.jobs.length > 0 && (
         <div className="card mb-4 p-4">
           <p className="label-mono mb-2">At the printer</p>
@@ -346,6 +348,35 @@ export function ShopPaymentsPage() {
         </>
       )}
     </Page>
+  );
+}
+
+/** Gateway and ESP32-S3 controllers, exactly as they reported (never assumed online). */
+export function DevicesCard({ data }: { data: ShopHardware }) {
+  const d = data.devices;
+  const label = !d ? 'Unknown' : d.status === 'not_configured' ? 'Not configured' : d.status === 'never_seen' ? 'No device has reported' : d.status;
+  return (
+    <div className="card mb-4 p-4 text-sm">
+      <div className="flex flex-wrap items-center gap-3">
+        <span className={`h-2.5 w-2.5 rounded-full ${d?.status === 'online' ? 'bg-emerald-500' : d?.status === 'offline' ? 'bg-signal' : 'bg-graphite'}`} />
+        <span className="font-medium">ESP32-S3 controller</span>
+        <span className="text-graphite">{label}</span>
+        {data.gateway && <span className="ml-auto font-mono text-[11px] text-graphite">gateway {data.gateway.gatewayId} · key {data.gateway.fingerprint}</span>}
+      </div>
+      {d?.status === 'not_configured' && (
+        <p className="mt-2 text-xs text-graphite">Set DEVICE_TOKEN on the backend and flash the controller to report to /api/v1/devices/heartbeat. Until then no device status is shown.</p>
+      )}
+      {d && d.items.length > 0 && (
+        <ul className="mt-3 space-y-1 text-xs">
+          {d.items.map((i) => (
+            <li key={i.deviceId} className="flex flex-wrap gap-3">
+              <span className="font-mono">{i.deviceId}</span><span>{i.type}</span><span className={i.status === 'online' ? 'text-emerald-700' : 'text-signal'}>{i.status}</span>
+              <span className="text-graphite">state {i.state}{i.firmware ? ` · fw ${i.firmware}` : ''} · last seen {new Date(i.lastSeenAt).toLocaleTimeString()}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
   );
 }
 

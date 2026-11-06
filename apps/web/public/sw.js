@@ -4,7 +4,7 @@
  * page at / is passed through untouched. */
 const CACHE = 'inklink-shell-v2';
 const SHELL = ['/pwa/', '/pwa/icon.svg', '/pwa/manifest.webmanifest'];
-const PWA_ROUTE = /^\/(app|shop|demo)(\/|$)/;
+const PWA_ROUTE = /^\/(app|shop|demo|portal|jury)(\/|$)/;
 
 self.addEventListener('install', (event) => {
   event.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting()));

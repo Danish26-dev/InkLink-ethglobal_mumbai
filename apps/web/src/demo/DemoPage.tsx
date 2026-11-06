@@ -76,6 +76,13 @@ export function DemoPage() {
         </nav>
       </header>
 
+      <Link to="/jury" className="mt-6 flex items-center gap-3 rounded-2xl bg-signal px-5 py-4 text-white hover:brightness-95">
+        <span className="flex-1">
+          <span className="block font-medium">Open the interactive ETHGlobal jury demo</span>
+          <span className="block text-sm text-white/85">Upload your own PDF and follow one real job through the customer, shop and agent perspectives.</span>
+        </span>
+        <ArrowRight className="h-5 w-5" aria-hidden="true" />
+      </Link>
       <h1 className="mt-8 text-4xl font-semibold tracking-tightest">Inklink in three minutes.</h1>
       <p className="mt-2 max-w-2xl text-graphite">
         A customer sends a document from a browser with no login and no wallet. An autonomous print operator configures a real

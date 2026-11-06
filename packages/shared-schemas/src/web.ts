@@ -29,6 +29,8 @@ export interface ShopChannel {
   /** True only when the agent service reports its model provider is configured and reachable. */
   agentAvailable: boolean;
   description: string;
+  /** The isolated jury demo shop (visible to jury sessions only). */
+  demo?: boolean;
 }
 
 /* Conversation (web session that owns the job) */
@@ -85,6 +87,15 @@ export interface JobView {
   runActive: boolean;
   /** Last printer-adapter submission result; `ok` means the spooler accepted it (not printed). */
   submission: { ok: boolean; state: string | null; message: string | null; submissionId?: string | null } | null;
+  /** True for jobs of the isolated jury demo shop (never printed physically). */
+  demo: boolean;
+  /** Jury demo only: SIMULATED steps, kept apart from the real status fields. */
+  simulation: {
+    payment?: { state: "SIMULATED_SETTLED"; at: IsoTimestamp; note: string };
+    execution?: { state: "SIMULATED_SUBMISSION" | "BLOCKED"; printerValidation: string; errors: string[]; printerId: string | null; at: IsoTimestamp; note: string };
+  } | null;
+  /** Events reported by ESP32-S3 / gateway devices for this job. */
+  deviceEvents: { at: IsoTimestamp; deviceId: string; type: string; detail: string | null }[];
   createdAt: IsoTimestamp;
   updatedAt: IsoTimestamp;
 }
@@ -143,6 +154,7 @@ export interface ClaimHandoffResponse {
 export interface ShopOverview {
   shopId: string;
   name: string;
+  demo?: boolean;
   acceptingOrders: boolean;
   agent: {
     available: boolean;
@@ -203,6 +215,13 @@ export interface ShopPayments {
 
 /* GET /api/v1/shop/hardware */
 export interface ShopHardware {
+  gateway?: { gatewayId: string; fingerprint: string; status: string };
   printerAdapter: { reachable: boolean; printers: PrinterSummary[]; defaultPrinter: string | null; error: string | null; url: string };
+  /** ESP32-S3 controllers / gateways, only as they actually reported. */
+  devices?: {
+    configured: boolean;
+    status: "not_configured" | "never_seen" | "online" | "offline";
+    items: { deviceId: string; type: string; firmware: string | null; state: string; printerId: string | null; detail: string | null; lastSeenAt: IsoTimestamp; status: "online" | "offline" }[];
+  };
   jobs: { jobId: string; status: JobStatus; deviceStatus: DeviceStatus; printerId: string | null; submission: JobView["submission"] }[];
 }

@@ -93,7 +93,17 @@ export function PrintSession() {
 
 type Busy = null | 'send' | 'upload' | 'quote' | 'approve' | 'review';
 
-function Session({ jobId, shop, onNew }: { jobId: string; shop: ShopChannel | null; onNew: () => void }) {
+/** Hooks for embedding the real session in the jury demo without changing its behaviour. */
+export interface SessionEmbed {
+  /** Quote approval; returns the native-app handoff, or null when payments are not configured. */
+  approve: (jobId: string) => Promise<PaymentHandoff | null>;
+  agentHref: string;
+  hideNewJob?: boolean;
+  /** Rendered under the quote once it is approved (e.g. "continue to the shop perspective"). */
+  afterApproval?: React.ReactNode;
+}
+
+export function Session({ jobId, shop, onNew, embed }: { jobId: string; shop: ShopChannel | null; onNew: () => void; embed?: SessionEmbed }) {
   const { events } = useJobEvents(jobId, 'web');
   const live = useMemo(() => foldEvents(events), [events]);
   const [job, setJob] = useState<JobView | null>(null);
@@ -146,8 +156,8 @@ function Session({ jobId, shop, onNew }: { jobId: string; shop: ShopChannel | nu
           <h1 className="mt-1 text-2xl font-semibold tracking-tight">{job.document?.filename ?? 'New print job'}</h1>
         </div>
         <div className="ml-auto flex items-center gap-2">
-          <Link to={`/app/jobs/${jobId}/agent`} className="btn-ghost px-3 py-1.5 text-xs"><MonitorPlay className="h-3.5 w-3.5" aria-hidden="true" />Watch the operator</Link>
-          <button type="button" onClick={onNew} className="btn-ghost px-3 py-1.5 text-xs"><Plus className="h-3.5 w-3.5" aria-hidden="true" />New job</button>
+          <Link to={embed?.agentHref ?? `/app/jobs/${jobId}/agent`} className="btn-ghost px-3 py-1.5 text-xs"><MonitorPlay className="h-3.5 w-3.5" aria-hidden="true" />Watch the operator</Link>
+          {!embed?.hideNewJob && <button type="button" onClick={onNew} className="btn-ghost px-3 py-1.5 text-xs"><Plus className="h-3.5 w-3.5" aria-hidden="true" />New job</button>}
         </div>
       </div>
 
@@ -165,7 +175,7 @@ function Session({ jobId, shop, onNew }: { jobId: string; shop: ShopChannel | nu
               onSend={(text) => act('send', async () => { await api.sendMessage(jobId, text); clearHandoff(); })}
               onPrivacy={(m) => act(null, async () => setJob(await api.setPrivacy(jobId, m)))} />
           )}
-          <Intelligence job={job} live={live} running={running} messages={messages} jobId={jobId} />
+          <Intelligence job={job} live={live} running={running} messages={messages} jobId={jobId} agentHref={embed?.agentHref} />
           {job.document?.editStatus === 'pending_review' && (
             <Card title="Review the edited copy" accent>
               <p className="text-sm text-graphite">The operator created an edited copy. Compare it with your original in the preview, then decide. Your original is never changed.</p>
@@ -176,9 +186,14 @@ function Session({ jobId, shop, onNew }: { jobId: string; shop: ShopChannel | nu
             </Card>
           )}
           <Settings job={job} />
-          <Pricing job={job} running={running} locked={locked} busy={busy} handoff={handoff}
+          <Pricing job={job} running={running} locked={locked} busy={busy} handoff={handoff} approvableWithoutPayment={Boolean(embed)}
             onQuote={() => act('quote', () => api.quote(jobId))}
-            onApprove={() => act('approve', async () => { const h = await api.approveQuote(jobId); setHandoff(h); saveHandoff(h, jobId); })} />
+            onApprove={() => act('approve', async () => {
+              const h = embed ? await embed.approve(jobId) : await api.approveQuote(jobId);
+              setHandoff(h);
+              saveHandoff(h, jobId);
+            })} />
+          {embed?.afterApproval && job.customerApprovedQuote && embed.afterApproval}
           <Tracking job={job} />
         </div>
       </div>
@@ -300,8 +315,8 @@ function Requirements({ job, disabled, sending, onSend, onPrivacy }: {
   );
 }
 
-function Intelligence({ job, live, running, messages, jobId }: {
-  job: JobView; live: OperatorState; running: boolean; messages: ConversationMessage[]; jobId: string;
+function Intelligence({ job, live, running, messages, jobId, agentHref }: {
+  job: JobView; live: OperatorState; running: boolean; messages: ConversationMessage[]; jobId: string; agentHref?: string;
 }) {
   const sel = job.privacy.selection;
   const last = [...messages].reverse().find((m) => m.role === 'agent' || m.role === 'system');
@@ -310,14 +325,16 @@ function Intelligence({ job, live, running, messages, jobId }: {
   const refused = live.run?.outcome === 'unavailable';
   return (
     <Card title="Document intelligence"
-      aside={<Link to={`/app/jobs/${jobId}/agent`} className="flex items-center gap-1 text-xs text-signal hover:underline">Watch live <ArrowRight className="h-3 w-3" aria-hidden="true" /></Link>}>
+      aside={<Link to={agentHref ?? `/app/jobs/${jobId}/agent`} className="flex items-center gap-1 text-xs text-signal hover:underline">Watch live <ArrowRight className="h-3 w-3" aria-hidden="true" /></Link>}>
       <p className="flex items-center gap-2 text-sm font-medium">
         {running ? <Loader2 className="h-4 w-4 animate-spin text-signal" aria-hidden="true" /> : refused ? <TriangleAlert className="h-4 w-4 text-signal" aria-hidden="true" /> : <Check className="h-4 w-4 text-emerald-600" aria-hidden="true" />}
         {running ? PHASE_LABEL[live.phase] : refused ? 'The operator did not start' : PHASE_LABEL[live.phase]}
       </p>
       {sel && (
         <p className="mt-1 text-xs text-graphite">
-          {sel.provider === 'vertex-ai'
+          {sel.provider === 'deterministic-fallback'
+            ? 'SIMULATED planning: deterministic demo operator (no AI inference)'
+            : sel.provider === 'vertex-ai'
             ? 'Vertex AI (non-sensitive documents only)'
             : `${sel.effectiveTrustMode === 'private' ? 'Private' : sel.effectiveTrustMode === 'verified' ? 'Verified' : 'Standard'} inference on 0G`} · {sel.reason}
         </p>
@@ -362,8 +379,9 @@ function Settings({ job }: { job: JobView }) {
   );
 }
 
-function Pricing({ job, running, locked, busy, handoff, onQuote, onApprove }: {
+function Pricing({ job, running, locked, busy, handoff, onQuote, onApprove, approvableWithoutPayment }: {
   job: JobView; running: boolean; locked: boolean; busy: Busy; handoff: PaymentHandoff | null; onQuote: () => void; onApprove: () => void;
+  approvableWithoutPayment?: boolean;
 }) {
   const reviewPending = job.document?.editStatus === 'pending_review';
   if (!job.quote) {
@@ -379,14 +397,17 @@ function Pricing({ job, running, locked, busy, handoff, onQuote, onApprove }: {
   }
   return (
     <>
-      <QuoteCard quote={job.quote} job={job} busy={busy === 'approve'} onApprove={onApprove} hasHandoff={Boolean(handoff)} />
+      <QuoteCard quote={job.quote} job={job} busy={busy === 'approve'} onApprove={onApprove} hasHandoff={Boolean(handoff)} demo={approvableWithoutPayment} />
       {handoff && job.status === 'awaiting_payment' && <PaymentHandoffCard handoff={handoff} />}
     </>
   );
 }
 
-function QuoteCard({ quote, job, busy, onApprove, hasHandoff }: { quote: Quote; job: JobView; busy: boolean; onApprove: () => void; hasHandoff: boolean }) {
-  const payable = quote.paymentMethods.includes('hedera_x402');
+function QuoteCard({ quote, job, busy, onApprove, hasHandoff, demo }: {
+  quote: Quote; job: JobView; busy: boolean; onApprove: () => void; hasHandoff: boolean; demo?: boolean;
+}) {
+  // In the jury demo the quote can be approved without a payment method; payment then follows the labelled simulated path.
+  const payable = quote.paymentMethods.includes('hedera_x402') || Boolean(demo);
   const expired = new Date(quote.expiresAt).getTime() <= Date.now();
   return (
     <section className="rounded-2xl bg-ink p-5 text-paper">
@@ -400,6 +421,8 @@ function QuoteCard({ quote, job, busy, onApprove, hasHandoff }: { quote: Quote; 
         <p className="mt-4 text-xs text-signal">This price expired. Send new requirements or get a new price.</p>
       ) : job.customerApprovedQuote && hasHandoff ? (
         <p className="mt-4 flex items-center gap-1.5 text-xs text-emerald-300"><Check className="h-3.5 w-3.5" aria-hidden="true" />Approved · continue in the Inklink app</p>
+      ) : job.customerApprovedQuote ? (
+        <p className="mt-4 flex items-center gap-1.5 text-xs text-emerald-300"><Check className="h-3.5 w-3.5" aria-hidden="true" />Quote approved by the customer</p>
       ) : job.status === 'awaiting_payment' ? (
         <button type="button" className="btn-signal mt-4 w-full" onClick={onApprove} disabled={busy}>
           {busy && <Loader2 className="h-4 w-4 animate-spin" />}Approve and pay in the Inklink app

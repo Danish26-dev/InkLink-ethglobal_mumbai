@@ -4,7 +4,7 @@ import type { ServerResponse } from 'node:http';
 
 // Single local origin for the whole product (http://localhost:5173):
 //   /                   this landing page (unchanged)
-//   /app, /shop, /demo  the Inklink PWA (apps/web dev server, port 5174)
+//   /portal, /app, /shop, /jury, /demo  the Inklink PWA (apps/web dev server, port 5174)
 //   /pwa/*              PWA assets
 //   /api/*              Inklink backend (FastAPI, port 8000)
 const PWA = process.env.INKLINK_PWA_URL ?? 'http://127.0.0.1:5174';
@@ -41,7 +41,7 @@ export default defineConfig({
     proxy: {
       '/api': { target: BACKEND, changeOrigin: false, xfwd: true },
       '/pwa': { target: PWA, changeOrigin: false, configure: unavailable('The Inklink app (apps/web)', 'cd apps/web; npm run dev') },
-      '^/(app|shop|demo)(/.*)?$': pwaPage,
+      '^/(app|shop|demo|portal|jury)(/.*)?$': pwaPage,
     },
   },
   build: {

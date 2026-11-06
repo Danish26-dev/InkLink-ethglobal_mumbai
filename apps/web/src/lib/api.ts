@@ -1,14 +1,21 @@
 /**
  * Thin client for the Inklink backend (same-origin via the Vite proxy).
  *
- * Two credentials exist, both kept in sessionStorage (cleared with the tab):
- *  - web: an anonymous, short-lived browser session (no login, no wallet);
- *  - shop: the shop admin token the shopkeeper types into the dashboard.
+ * Credentials:
+ *  - web:  an anonymous, short-lived browser session (no login, no wallet),
+ *          kept in sessionStorage;
+ *  - shop: the shopkeeper's server-side session, carried by an HttpOnly cookie
+ *          that JavaScript cannot read. Every request sends
+ *          `X-Inklink-Request: 1` (the backend's CSRF guard for cookie auth);
+ *  - jury: while the ETHGlobal jury demo is active, BOTH the customer and the
+ *          shop views use the jury session, which the backend confines to
+ *          the isolated demo shop and the judge's own jobs.
  * Errors follow the agreed envelope { success:false, error:{ code, message } }.
  */
 import type {
   ConversationMessage,
   JobView,
+  OperatorEvent,
   PaymentHandoff,
   PrinterSummary,
   Quote,
@@ -34,7 +41,7 @@ export class ApiError extends Error {
 }
 
 const WEB_KEY = 'inklink.web.session';
-const SHOP_KEY = 'inklink.shop.token';
+const JURY_KEY = 'inklink.jury.session';
 
 /* ───────────── credentials ───────────── */
 
@@ -66,16 +73,47 @@ export async function ensureWebSession(): Promise<WebSession> {
   return pendingSession;
 }
 
-export const shopToken = {
-  get: (): string | null => sessionStorage.getItem(SHOP_KEY),
-  set: (t: string) => sessionStorage.setItem(SHOP_KEY, t),
-  clear: () => sessionStorage.removeItem(SHOP_KEY),
+export interface JurySession {
+  sessionToken: string;
+  juryRef: string;
+  demoShopId: string;
+  expiresAt: string;
+}
+
+/** Jury demo mode: on while the /jury experience is open in this tab. */
+export const jury = {
+  session(): JurySession | null {
+    try {
+      const s = JSON.parse(sessionStorage.getItem(JURY_KEY) ?? 'null') as JurySession | null;
+      return s && new Date(s.expiresAt).getTime() - Date.now() > 60_000 ? s : null;
+    } catch {
+      return null;
+    }
+  },
+  active: false,
+  enter(s: JurySession) {
+    sessionStorage.setItem(JURY_KEY, JSON.stringify(s));
+    jury.active = true;
+  },
+  activate() {
+    jury.active = Boolean(jury.session());
+  },
+  exit() {
+    jury.active = false;
+  },
+  forget() {
+    sessionStorage.removeItem(JURY_KEY);
+    jury.active = false;
+  },
 };
 
 async function bearer(auth: AuthKind | null): Promise<string | null> {
+  if (auth && jury.active) {
+    const s = jury.session();
+    if (s) return s.sessionToken;
+  }
   if (auth === 'web') return (await ensureWebSession()).sessionToken;
-  // No token is fine on the shop computer itself (backend SHOP_LOCAL_ACCESS).
-  if (auth === 'shop') return shopToken.get();
+  // Shop calls authenticate with the HttpOnly session cookie, never a JS-held token.
   return null;
 }
 
@@ -89,7 +127,7 @@ interface RequestOptions {
 }
 
 async function request<T>(method: string, path: string, opts: RequestOptions = {}): Promise<T> {
-  const headers: Record<string, string> = { accept: 'application/json', ...opts.headers };
+  const headers: Record<string, string> = { accept: 'application/json', 'x-inklink-request': '1', ...opts.headers };
   const token = await bearer(opts.auth === undefined ? 'web' : opts.auth);
   if (token) headers.authorization = `Bearer ${token}`;
   let body: BodyInit | undefined;
@@ -101,7 +139,7 @@ async function request<T>(method: string, path: string, opts: RequestOptions = {
 
   let res: Response;
   try {
-    res = await fetch(path, { method, headers, body });
+    res = await fetch(path, { method, headers, body, credentials: 'same-origin' });
   } catch {
     throw new ApiError(0, 'NETWORK_ERROR', 'The Inklink backend is not reachable.');
   }
@@ -117,7 +155,7 @@ async function request<T>(method: string, path: string, opts: RequestOptions = {
   if (!res.ok) {
     const err = (data as { error?: { code?: string; message?: string } } | null)?.error;
     // An expired web session: drop it so the next call creates a fresh one.
-    if (res.status === 401 && (opts.auth ?? 'web') === 'web') sessionStorage.removeItem(WEB_KEY);
+    if (res.status === 401 && (opts.auth ?? 'web') === 'web' && !jury.active) sessionStorage.removeItem(WEB_KEY);
     throw new ApiError(res.status, err?.code ?? 'INTERNAL_ERROR', err?.message ?? `Request failed (${res.status}).`);
   }
   return data as T;
@@ -201,7 +239,67 @@ export const api = {
     hardware: () => request<ShopHardware>('GET', '/api/v1/shop/hardware', { auth: 'shop' }),
     payments: () => request<ShopPayments>('GET', '/api/v1/shop/payments', { auth: 'shop' }),
   },
+
+  history: (jobId: string, auth: AuthKind = 'web') =>
+    request<{ jobId: string; events: OperatorEvent[] }>('GET', `/api/v1/jobs/${enc(jobId)}/history`, { auth }),
+
+  /** Shopkeeper authentication (HttpOnly cookie session). */
+  shopAuth: {
+    login: (email: string, password: string) =>
+      request<ShopSessionView>('POST', '/api/v1/shop-auth/login', { auth: null, body: { email, password } }),
+    me: () => request<ShopSessionView>('GET', '/api/v1/shop-auth/me', { auth: null }),
+    setActiveShop: (shopId: string) => request<ShopSessionView>('PUT', '/api/v1/shop-auth/active-shop', { auth: null, body: { shopId } }),
+    logout: () => request<{ ok: boolean }>('POST', '/api/v1/shop-auth/logout', { auth: null }),
+  },
+
+  /** ETHGlobal jury demo orchestration (jury session only). */
+  jury: {
+    createSession: () => request<JurySession>('POST', '/api/v1/jury/sessions', { auth: null }),
+    status: () => request<{ integrations: Integration[]; demoShopId: string }>('GET', '/api/v1/jury/status', { auth: 'web' }),
+    state: () => request<{ demoShopId: string; currentJobId: string | null; jobs: { jobId: string; status: string; filename: string | null; createdAt: string }[] }>(
+      'GET', '/api/v1/jury/state', { auth: 'web' }),
+    runFallback: (jobId: string, instruction?: string) =>
+      request<{ started: boolean }>('POST', `/api/v1/jury/jobs/${enc(jobId)}/run-fallback`, { body: { instruction: instruction ?? null } }),
+    approveQuote: (jobId: string) =>
+      request<{ approved: boolean; handoff: PaymentHandoff | null; paymentsConfigured: boolean }>('POST', `/api/v1/jury/jobs/${enc(jobId)}/approve-quote`),
+    payment: (jobId: string) => request<JuryPayment>('GET', `/api/v1/jury/jobs/${enc(jobId)}/payment`),
+    simulatePayment: (jobId: string) => request<JobView>('POST', `/api/v1/jury/jobs/${enc(jobId)}/simulate-payment`),
+    simulateExecution: (jobId: string) => request<JobView>('POST', `/api/v1/jury/jobs/${enc(jobId)}/simulate-execution`),
+    lifecycle: (jobId: string) => request<JuryLifecycle>('GET', `/api/v1/jury/jobs/${enc(jobId)}/lifecycle`),
+    reset: () => request<{ removed: string[] }>('POST', '/api/v1/jury/reset'),
+  },
 };
+
+export interface ShopSessionView {
+  account: { accountId: string; email: string; name: string; role: string };
+  shops: { shopId: string; name: string; demo: boolean; acceptingOrders: boolean }[];
+  activeShopId: string | null;
+  expiresAt: string;
+}
+
+export interface Integration {
+  id: string;
+  label: string;
+  state: 'live' | 'configured' | 'configured_unverified' | 'not_configured' | 'unavailable' | 'simulated' | 'online' | 'offline' | 'never_seen';
+  detail: string;
+}
+
+export interface JuryPayment {
+  quote: { quoteId: string; amountInr: string; amountUsdc: string | null; rate: string | null; capturedAt: string; expiresAt: string; paymentMethods: string[] } | null;
+  customerApproved: boolean;
+  paymentsConfigured: boolean;
+  x402Requirement: { network: string; asset: string; amount: string; payTo: string; resource: string } | null;
+  realPayment: { paymentId: string; status: string; transactionId: string | null; hashscanUrl: string | null } | null;
+  paymentStatus: string;
+  simulated: { state: string; at: string; note: string } | null;
+}
+
+export interface JuryLifecycle {
+  jobId: string;
+  stages: { id: string; label: string; state: string; mode: 'real' | 'simulated'; detail?: string | null }[];
+  events: number;
+  chainRecords: { kind: string; at: string; status: string; data: Record<string, unknown> }[];
+}
 
 function enc(s: string) {
   return encodeURIComponent(s);

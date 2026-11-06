@@ -1,9 +1,10 @@
-import { useCallback, useEffect, useState, type FormEvent } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { NavLink, Outlet, useOutletContext } from 'react-router-dom';
 import { Bot, Inbox, LayoutGrid, Loader2, LogOut, MonitorPlay, Printer, QrCode, Settings, Wallet } from 'lucide-react';
 import type { ShopOverview } from '@inklink/shared-schemas';
-import { api, ApiError, errorMessage, shopToken } from '../lib/api';
+import { api, errorMessage } from '../lib/api';
 import { Logo } from '../components/Logo';
+import { useShopSession } from './useShopSession';
 
 export interface ShopContext {
   overview: ShopOverview | null;
@@ -24,9 +25,7 @@ const NAV = [
 
 /** Shopkeeper dashboard shell: dark sidebar with availability, agent and printer status. */
 export function ShopLayout() {
-  // On the shop computer the backend allows tokenless access; elsewhere the
-  // first request fails with 401/403 and the token form appears.
-  const [authed, setAuthed] = useState(true);
+  const { session, handleAuthError, switchShop, logout } = useShopSession();
   const [overview, setOverview] = useState<ShopOverview | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [toggling, setToggling] = useState(false);
@@ -36,22 +35,30 @@ export function ShopLayout() {
       setOverview(await api.shop.overview());
       setError(null);
     } catch (e) {
-      if (e instanceof ApiError && (e.status === 401 || e.status === 403 || e.code === 'UNAUTHORIZED')) {
-        shopToken.clear();
-        setAuthed(false);
-      }
-      setError(errorMessage(e));
+      if (!handleAuthError(e)) setError(errorMessage(e));
     }
-  }, []);
+  }, [handleAuthError]);
 
   useEffect(() => {
-    if (!authed) return;
+    if (!session) return;
     void reload();
     const t = setInterval(reload, 10_000);
     return () => clearInterval(t);
-  }, [authed, reload]);
+  }, [session, reload]);
 
-  if (!authed) return <TokenGate onDone={() => setAuthed(true)} />;
+  if (!session) {
+    return <div className="flex h-full items-center justify-center bg-ink text-paper/60"><Loader2 className="mr-2 h-4 w-4 animate-spin" />Checking your session…</div>;
+  }
+
+  const onSwitch = async (shopId: string) => {
+    try {
+      await switchShop(shopId);
+      setOverview(null);
+      await reload();
+    } catch (e) {
+      if (!handleAuthError(e)) setError(errorMessage(e));
+    }
+  };
 
   const toggle = async () => {
     if (!overview) return;
@@ -74,7 +81,17 @@ export function ShopLayout() {
         <div className="px-5 py-5"><Logo to="/shop" invert /></div>
         <div className="px-5">
           <p className="font-mono text-[10px] uppercase tracking-[0.14em] text-paper/50">Shop</p>
-          <p className="mt-1 truncate font-medium">{overview?.name ?? '…'}</p>
+          {session.shops.length > 1 ? (
+            <>
+              <label htmlFor="shop-select" className="sr-only">Select shop</label>
+              <select id="shop-select" value={session.activeShopId ?? ''} onChange={(e) => onSwitch(e.target.value)}
+                className="mt-1 w-full rounded-md border border-white/15 bg-white/5 px-2 py-1.5 text-sm font-medium text-paper focus:outline-none">
+                {session.shops.map((s) => <option key={s.shopId} value={s.shopId} className="text-ink">{s.name}</option>)}
+              </select>
+            </>
+          ) : (
+            <p className="mt-1 truncate font-medium">{overview?.name ?? session.shops[0]?.name ?? '…'}</p>
+          )}
         </div>
 
         <div className="mx-3 mt-5 space-y-1 rounded-lg bg-white/5 p-3 text-sm">
@@ -121,14 +138,18 @@ export function ShopLayout() {
           <NavLink to="/app" className="hover:text-paper">Customer app</NavLink>
           <NavLink to="/demo" className="hover:text-paper">Demo</NavLink>
         </div>
-        {shopToken.get() ? (
-          <button type="button" className="m-3 flex items-center gap-2 rounded-md px-3 py-2 text-sm text-paper/60 hover:bg-white/5"
-            onClick={() => { shopToken.clear(); setAuthed(false); setOverview(null); }}>
-            <LogOut className="h-4 w-4" aria-hidden="true" />Lock dashboard
+        <div className="m-3 flex items-center gap-2 rounded-md bg-white/5 px-3 py-2">
+          <span className="flex h-7 w-7 items-center justify-center rounded-full bg-paper text-xs font-semibold text-ink">
+            {(session.account.name || session.account.email).slice(0, 1).toUpperCase()}
+          </span>
+          <span className="min-w-0 flex-1">
+            <span className="block truncate text-xs text-paper">{session.account.name}</span>
+            <span className="block truncate text-[10px] text-paper/50">{session.account.email}</span>
+          </span>
+          <button type="button" onClick={logout} className="rounded-md p-1.5 text-paper/60 hover:bg-white/10 hover:text-paper" aria-label="Log out" title="Log out">
+            <LogOut className="h-4 w-4" aria-hidden="true" />
           </button>
-        ) : (
-          <p className="m-3 px-3 py-2 text-[11px] text-paper/45">Open on this shop computer. Other devices need the shop admin token.</p>
-        )}
+        </div>
       </aside>
 
       <main className="min-w-0 flex-1 overflow-y-auto">
@@ -148,43 +169,6 @@ function StatusLine({ icon: Icon, label, ok, text }: { icon: typeof Bot; label: 
         <span className={`h-2 w-2 rounded-full ${ok === undefined ? 'bg-white/30' : ok ? 'bg-emerald-400' : 'bg-signal'}`} />
         <span className="max-w-[110px] truncate">{text}</span>
       </span>
-    </div>
-  );
-}
-
-function TokenGate({ onDone }: { onDone: () => void }) {
-  const [value, setValue] = useState('');
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const submit = async (e: FormEvent) => {
-    e.preventDefault();
-    setBusy(true);
-    setError(null);
-    shopToken.set(value.trim());
-    try {
-      await api.shop.overview();
-      onDone();
-    } catch (err) {
-      shopToken.clear();
-      setError(errorMessage(err));
-    } finally {
-      setBusy(false);
-    }
-  };
-  return (
-    <div className="flex h-full items-center justify-center bg-ink p-6">
-      <form onSubmit={submit} className="w-full max-w-sm rounded-xl bg-paper p-6">
-        <Logo to="/shop" />
-        <h1 className="mt-6 text-xl font-semibold">Shop dashboard</h1>
-        <p className="mt-1 text-sm text-graphite">Enter the shop admin token configured on this shop's backend.</p>
-        <label htmlFor="shop-token" className="label-mono mt-5 block">Admin token</label>
-        <input id="shop-token" type="password" autoComplete="current-password" value={value} onChange={(e) => setValue(e.target.value)}
-          className="mt-1 w-full rounded-md border border-light-grey bg-white px-3 py-2 text-sm focus:border-ink focus:outline-none" />
-        {error && <p className="mt-2 text-sm text-signal" role="alert">{error}</p>}
-        <button type="submit" className="btn-primary mt-4 w-full" disabled={!value.trim() || busy}>
-          {busy && <Loader2 className="h-4 w-4 animate-spin" />}Open dashboard
-        </button>
-      </form>
     </div>
   );
 }

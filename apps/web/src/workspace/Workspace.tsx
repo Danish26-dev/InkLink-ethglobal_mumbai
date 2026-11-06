@@ -19,7 +19,9 @@ const REFRESH_ON = new Set(['job_status_updated', 'approval_required', 'document
  * Agent Workspace: watch the print operator configure the real printer.
  * The cursor, menus and values are driven only by backend tool events.
  */
-export function Workspace({ auth, jobId: forcedJobId, headerExtra }: { auth: AuthKind; jobId?: string; headerExtra?: ReactNode }) {
+export function Workspace({ auth, jobId: forcedJobId, headerExtra, backHref }: {
+  auth: AuthKind; jobId?: string; headerExtra?: ReactNode; backHref?: string;
+}) {
   const params = useParams<{ jobId: string }>();
   const jobId = forcedJobId ?? params.jobId;
   const reducedMotion = useReducedMotion();
@@ -55,7 +57,7 @@ export function Workspace({ auth, jobId: forcedJobId, headerExtra }: { auth: Aut
     }
   }, [auth, state.run?.outcome]);
 
-  const back = auth === 'shop' ? '/shop/jobs' : job ? `/app/chat/${job.shopId}?job=${jobId}` : '/app/jobs';
+  const back = backHref ?? (auth === 'shop' ? '/shop/jobs' : job ? `/app/chat/${job.shopId}?job=${jobId}` : '/app/jobs');
   const unavailable = state.run?.outcome === 'unavailable';
 
   return (
