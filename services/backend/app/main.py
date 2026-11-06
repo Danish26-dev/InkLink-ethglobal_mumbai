@@ -37,6 +37,7 @@ from .inference import router as inference_router
 from .jury import router as jury_router
 from .routes_shop_auth import router as shop_auth_router
 from .retention import retention_loop
+from .routes_native import payment_reconcile_loop
 from .routes_native import router as native_router
 from .routes_shop import router as shop_router
 from .routes_web import router as web_router
@@ -52,10 +53,12 @@ async def lifespan(_app: FastAPI):
     except ValueError as exc:  # e.g. a password below the minimum length
         log.warning("Bootstrap shopkeeper not created: %s", exc)
     task = asyncio.create_task(retention_loop())
+    reconcile = asyncio.create_task(payment_reconcile_loop())
     try:
         yield
     finally:
         task.cancel()
+        reconcile.cancel()
         # Graceful shutdown (Cloud Run sends SIGTERM): release long-polls, write pending state.
         gateway_relay.shutdown()
         get_store().close()

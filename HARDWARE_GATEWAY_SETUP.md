@@ -72,10 +72,15 @@ Two independent paths, both outbound from the device's point of view:
    A job becomes `completed` only from a real `print_completed` for a job the backend submitted.
 2. **Status for the display (from the shop gateway)**: `GET http://<shop-computer>:7780/display`
    returns `{gatewayId, backendConnected, lastPollAt, jobs:[{jobId, status, paymentStatus, deviceStatus, updatedAt, payment?}]}`
-   (the last 10 real jobs; never documents or customer data). `payment` =
-   `{transactionId, network, amount, settledAt, verifiedAt, hashscanUrl}` appears **only** after the
-   backend verified the signed settlement callback (`payment_status_updated` with `status: "settled"`).
-   The display never talks to the payment agent. It binds to
+   (the last 10 real jobs; never documents or customer data).
+   `payment` = `{paymentId, status, verified, amount, asset, network, transactionId, settledAt, verifiedAt, hashscanUrl}`
+   appears once a payment exists. `status` is the backend's payment status (`processing`, `settled`,
+   `failed`, `expired`). `amount`/`asset`/`network` are the backend's quote. `verified` is `true` and the
+   transaction fields are filled **only** after the backend verified the HMAC-signed settlement callback
+   that the payment agent sends after its mirror-node check; otherwise they are `null`. Failures and
+   expiries are found by the backend's reconciler every 15 s, even when no app is open.
+   `authorized: true` appears when the backend authorized print execution. The display never talks to
+   the payment agent and never decides anything itself. It binds to
    `127.0.0.1` by default. To let the ESP32 read it over Wi-Fi, set `DISPLAY_HOST` to the shop
    computer's LAN address **and** `DISPLAY_TOKEN`; the device then sends `Authorization: Bearer <DISPLAY_TOKEN>`.
    Never port-forward it.

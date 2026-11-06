@@ -51,6 +51,33 @@ export function loadConfig(env = process.env) {
   return cfg;
 }
 
+const HEDERA_TX_ID = /^\d+\.\d+\.\d+@\d+\.\d+$/;
+const str = (v) => (typeof v === 'string' && v.length > 0 ? v : null);
+
+/**
+ * Payment block for the display, built only from what the backend sent. `verified` is true
+ * only for a `settled` event carrying a real Hedera transaction id and the backend's
+ * verification time: the backend publishes that only after the HMAC-signed callback, which
+ * the payment agent sends only after its mirror-node check. Nothing is filled in locally.
+ */
+export function paymentView(p) {
+  const status = str(p.status) ?? 'unknown';
+  const tx = str(p.transactionId);
+  const verified = status === 'settled' && tx !== null && HEDERA_TX_ID.test(tx) && str(p.verifiedAt) !== null;
+  return {
+    paymentId: str(p.paymentId),
+    status,
+    verified,
+    amount: str(p.amount),
+    asset: str(p.asset),
+    network: str(p.network),
+    transactionId: verified ? tx : null,
+    settledAt: verified ? str(p.settledAt) : null,
+    verifiedAt: verified ? str(p.verifiedAt) : null,
+    hashscanUrl: verified ? str(p.hashscanUrl) : null,
+  };
+}
+
 export function isAllowed(method, path) {
   return ALLOWED.some(([m, re]) => m === method && re.test(path));
 }
@@ -106,19 +133,7 @@ export function createGateway(cfg, { fetchImpl = fetch, log = console } = {}) {
         ...(isPayment && typeof p.status === 'string' ? { paymentStatus: p.status } : {}),
         ...(typeof p.paymentStatus === 'string' ? { paymentStatus: p.paymentStatus } : {}),
         ...(typeof p.deviceStatus === 'string' ? { deviceStatus: p.deviceStatus } : {}),
-        // Settlement proof: the backend forwards these only after verifying the signed callback.
-        ...(e.type === 'payment_status_updated' && p.status === 'settled' && typeof p.transactionId === 'string'
-          ? {
-              payment: {
-                transactionId: p.transactionId,
-                network: p.network ?? null,
-                amount: p.amount ?? null,
-                settledAt: p.settledAt ?? null,
-                verifiedAt: p.verifiedAt ?? null,
-                hashscanUrl: p.hashscanUrl ?? null,
-              },
-            }
-          : {}),
+        ...(isPayment ? { payment: paymentView(p) } : {}),
         ...(e.type === 'execution_authorized' ? { authorized: true } : {}),
         updatedAt: e.ts ?? new Date().toISOString(),
       };

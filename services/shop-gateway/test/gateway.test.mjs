@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { createGateway, isAllowed, loadConfig } from '../src/gateway.mjs';
+import { createGateway, isAllowed, loadConfig, paymentView } from '../src/gateway.mjs';
 
 const BASE = {
   BACKEND_URL: 'https://backend.example.run.app',
@@ -109,15 +109,34 @@ test('display: settlement proof appears only for a settled payment, job status u
   let job = gw.displayState().jobs[0];
   assert.equal(job.status, 'awaiting_payment');
   assert.equal(job.paymentStatus, 'processing');
-  assert.equal(job.payment, undefined);
+  assert.equal(job.payment.verified, false);
+  assert.equal(job.payment.transactionId, null);
   gw.applyEvents([{ jobId: 'job_2', type: 'payment_status_updated', ts: 't3', payload: {
-    status: 'settled', transactionId: '0.0.1@1.2', network: 'hedera:testnet', amount: '0.05',
-    settledAt: 's', verifiedAt: 'v', hashscanUrl: 'https://hashscan.io/testnet/transaction/0.0.1-1-2' } }]);
+    paymentId: 'pay_1', status: 'settled', transactionId: '0.0.11330279@1793967953.517115964', network: 'hedera:testnet',
+    amount: '0.05', asset: 'HTS_USDC', settledAt: 's', verifiedAt: 'v',
+    hashscanUrl: 'https://hashscan.io/testnet/transaction/0.0.11330279-1793967953-517115964' } }]);
   job = gw.displayState().jobs[0];
   assert.equal(job.status, 'awaiting_payment');
   assert.equal(job.paymentStatus, 'settled');
-  assert.deepEqual(job.payment, { transactionId: '0.0.1@1.2', network: 'hedera:testnet', amount: '0.05',
-    settledAt: 's', verifiedAt: 'v', hashscanUrl: 'https://hashscan.io/testnet/transaction/0.0.1-1-2' });
+  assert.deepEqual(job.payment, { paymentId: 'pay_1', status: 'settled', verified: true, amount: '0.05', asset: 'HTS_USDC',
+    network: 'hedera:testnet', transactionId: '0.0.11330279@1793967953.517115964', settledAt: 's', verifiedAt: 'v',
+    hashscanUrl: 'https://hashscan.io/testnet/transaction/0.0.11330279-1793967953-517115964' });
+});
+
+test('display: never verified without a real tx id and backend verification', () => {
+  for (const payload of [
+    { status: 'settled', amount: '0.05' },                                       // no tx id
+    { status: 'settled', transactionId: 'fake-tx', verifiedAt: 'v' },              // not a Hedera tx id
+    { status: 'settled', transactionId: '0.0.1@1.2' },                              // backend never verified
+    { status: 'processing', transactionId: '0.0.1@1.2', verifiedAt: 'v' },          // not settled
+  ]) {
+    const v = paymentView(payload);
+    assert.equal(v.verified, false, JSON.stringify(payload));
+    assert.equal(v.transactionId, null);
+  }
+  const failed = paymentView({ status: 'failed', amount: '0.05', asset: 'HTS_USDC', network: 'hedera:testnet' });
+  assert.equal(failed.status, 'failed');
+  assert.equal(failed.amount, '0.05');
 });
 
 test('display endpoint: token enforced when configured', async () => {

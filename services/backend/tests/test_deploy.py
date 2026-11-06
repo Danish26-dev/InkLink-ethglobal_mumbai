@@ -228,9 +228,39 @@ def test_only_status_fields_of_real_jobs_reach_the_gateway(env):
                             "payload": {"status": "settled", "transactionId": "0.0.1@1.2", "network": "hedera:testnet",
                                         "amount": "0.05", "verifiedAt": "v", "paymentId": "pay_x"}})
     first, second = [e["payload"] for e in gateway_relay._relay.events]
-    assert first == {"status": "processing"}
-    assert second == {"status": "settled", "transactionId": "0.0.1@1.2", "network": "hedera:testnet",
+    # Quote facts on every payment event; proof (tx id, verification time) only when settled.
+    assert first == {"status": "processing", "amount": "0.05"}
+    assert second == {"status": "settled", "paymentId": "pay_x", "transactionId": "0.0.1@1.2", "network": "hedera:testnet",
                       "amount": "0.05", "verifiedAt": "v"}
+
+
+def test_reconciler_records_agent_failure_without_any_app(env, monkeypatch):
+    """A failed payment reaches the shop display even when no app is polling."""
+    from app import routes_native
+
+    env(PRINTER_MODE="relay", GATEWAY_TOKEN="test-gateway-token")
+    st = store_mod.get_store()
+    s = config.get_settings()
+    ts = store_mod.now_iso()
+    st.jobs["job_p"] = store_mod.JobRecord(job_id="job_p", shop_id=s.shop_id, owner="x", created_at=ts, updated_at=ts,
+                                           payment_status="processing")
+    st.payments["pay_p"] = store_mod.PaymentRecord(payment_id="pay_p", job_id="job_p", quote_id="q", merchant_id="shop_001",
+                                                   amount_usdc="0.05", status="processing")
+    answers = iter([(200, {"status": "processing"}), (200, {"status": "settled", "transactionId": "0.0.9@1.1"}),
+                    (200, {"status": "failed"})])
+
+    async def agent(method, path, body=None):
+        return next(answers)
+
+    monkeypatch.setattr(routes_native, "call_payment_agent", agent)
+    assert asyncio.run(routes_native.refresh_payment_from_agent("pay_p")) is None   # still processing
+    assert asyncio.run(routes_native.refresh_payment_from_agent("pay_p")) is None   # "settled" is NEVER taken from here
+    assert st.payments["pay_p"].status == "processing"
+    assert asyncio.run(routes_native.refresh_payment_from_agent("pay_p")) == "failed"
+    assert st.jobs["job_p"].payment_status == "failed"
+    forwarded = [e["payload"] for e in gateway_relay._relay.events if e["type"] == "payment_status_updated"]
+    assert forwarded[-1] == {"status": "failed", "paymentId": "pay_p", "amount": "0.05", "asset": "HTS_USDC",
+                             "network": "hedera:testnet"}
 
 
 # ───────────── bootstrap shopkeeper (Cloud Run has no shell) ─────────────
