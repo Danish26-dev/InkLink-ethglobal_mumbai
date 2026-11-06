@@ -166,7 +166,11 @@ def test_operator_events_update_the_authoritative_job(client, monkeypatch):
         yield {"type": "tool_succeeded", "payload": {"runId": rid, "toolUseId": "t2", "tool": "validate_print_config", "result": {"ok": True}}}
         yield {"type": "agent_finished", "payload": {"runId": rid, "outcome": "completed", "message": "Configured 2 copies."}}
 
+    async def granted(job, run_id, instruction):
+        return {"baseUrl": "http://127.0.0.1:8000/api/v1/internal/inference/v1", "token": "igr_t", "model": "glm-5.3", "trustMode": "private"}
+
     monkeypatch.setattr(jobs_mod, "stream_operator_run", fake_stream)
+    monkeypatch.setattr(jobs_mod, "prepare_inference", granted)
     hdr = web_session(client)
     job_id = new_job_with_pdf(client, hdr)
     with client:  # keep the loop alive for the background run

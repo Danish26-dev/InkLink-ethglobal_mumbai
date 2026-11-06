@@ -26,6 +26,13 @@ os.environ.update(
         "INR_TO_USDC_RATE": "0.005",
         "PRICE_PER_PAGE_MONOCHROME": "2.00",
         "PRICE_PER_PAGE_COLOR": "10.00",
+        # Never read the developer's real services/backend/.env (or real 0G keys) in tests.
+        "INKLINK_BACKEND_DOTENV": "0",
+        "ZERO_G_STANDARD_API_KEY": "",
+        "ZERO_G_VERIFIED_API_KEY": "",
+        "ZERO_G_PRIVATE_API_KEY": "",
+        "ZERO_G_DEFAULT_TRUST_MODE": "private",
+        "SHOP_LOCAL_ACCESS": "true",
     }
 )
 

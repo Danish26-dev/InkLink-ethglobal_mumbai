@@ -23,12 +23,15 @@ import time
 from pathlib import Path
 from typing import Any
 
-from .clients import ServiceError, fetch_engine_output, stream_operator_run, submit_print, validate_print_config
+from . import zerog
+from .clients import ServiceError, agent_health, fetch_engine_output, stream_operator_run, submit_print, validate_print_config
 from .config import get_settings
 from .documents import count_pages
 from .events import publish, publish_job_status
+from .inference import issue_grant, revoke_grant
 from .pricing import inr_price, inr_to_usdc
-from .store import JobRecord, QuoteRecord, get_store, iso_from_epoch, new_id, now_iso
+from .sensitivity import select_trust_mode
+from .store import DocumentRecord, JobRecord, QuoteRecord, get_store, iso_from_epoch, new_id, now_iso
 
 _running: set[str] = set()
 
@@ -47,6 +50,24 @@ def contract_print_config(op: dict[str, Any]) -> dict[str, Any]:
         "colourMode": "grayscale" if op.get("colorMode") == "monochrome" else "colour",
         "paperSize": op.get("paperSize") or "A4",
     }
+
+
+def working_document_path(doc: DocumentRecord) -> Path | None:
+    """The file the operator works on: the edited copy unless the customer rejected it."""
+    if doc.purged:
+        return None
+    if doc.edited_path and doc.edit_status in ("pending_review", "approved"):
+        return Path(doc.edited_path)
+    return Path(doc.original_path)
+
+
+def printable_document_path(doc: DocumentRecord) -> Path | None:
+    """The file that may be priced and printed: an edited copy only after customer approval."""
+    if doc.purged:
+        return None
+    if doc.edited_path and doc.edit_status == "approved":
+        return Path(doc.edited_path)
+    return Path(doc.original_path)
 
 
 def job_dir(job_id: str) -> Path:
@@ -81,12 +102,15 @@ async def _handle_harness_event(job: JobRecord, event: dict[str, Any]) -> None:
             path = job_dir(job.job_id) / f"edited.{job.document.format}"
             path.write_bytes(data)
             with store.lock:
+                # The original stays untouched; the edit waits for customer review.
                 job.document.edited_path = str(path)
+                job.document.edit_status = "pending_review"
                 job.document.review_recommended = bool(payload.get("reviewRecommended"))
                 job.document.notes = [str(n) for n in payload.get("notes") or []][:20]
-                job.document.page_count = count_pages(path, job.document.format) or job.document.page_count
                 store.touch(job)
                 store.save()
+            publish(job.job_id, "approval_required", {"kind": "document_review",
+                                                      "reason": "Review the edited document before it can be priced or printed."})
         except ServiceError as exc:
             publish(job.job_id, "tool_failed", {
                 "runId": payload.get("runId", ""),
@@ -94,6 +118,13 @@ async def _handle_harness_event(job: JobRecord, event: dict[str, Any]) -> None:
                 "tool": "execute_operation_plan",
                 "error": {"code": exc.code, "message": exc.message},
             })
+
+    if etype == "agent_started" and job.trust_selection:
+        # Add the backend's policy decision (labels only) next to the agent's own report.
+        sel = job.trust_selection
+        payload["trustMode"] = sel.get("effectiveTrustMode", payload.get("trustMode"))
+        payload["trustSelection"] = {k: sel.get(k) for k in (
+            "requiredTrustMode", "requestedTrustMode", "effectiveTrustMode", "reason", "raisedBy", "documentLevel")}
 
     publish(job.job_id, etype, payload, source="agent")
 
@@ -106,16 +137,89 @@ async def _handle_harness_event(job: JobRecord, event: dict[str, Any]) -> None:
             store.save()
 
 
+class RunRefused(Exception):
+    """The run must not start (policy or configuration); the message is customer-safe."""
+
+
+async def prepare_inference(job: JobRecord, run_id: str, instruction: str) -> dict[str, Any] | None:
+    """Select the trust mode for this run and issue an inference grant.
+
+    Returns the `inference` descriptor for the agent, or None when the agent is
+    explicitly configured for Vertex AI and the document is non-sensitive.
+    Raises RunRefused before any document content is sent anywhere.
+    """
+    store = get_store()
+    s = get_settings()
+    doc = job.document
+    doc_class = doc.classification if doc and not doc.purged else None
+    if doc and not doc.purged and doc_class is None:
+        doc_class = {"level": "unclassified", "categories": [], "signals": {}, "reason": "The document has not been classified."}
+    try:
+        selection = select_trust_mode(
+            doc_class=doc_class,
+            instruction=instruction,
+            customer_requested=job.requested_trust_mode,
+            shop_minimum=store.shop_config().get("minimumTrustMode"),
+        )
+    except zerog.ZeroGError as exc:
+        raise RunRefused(exc.message) from exc
+    mode = selection["effectiveTrustMode"]
+    selection["documentLevel"] = doc_class["level"] if doc_class else None
+    selection["at"] = now_iso()
+
+    health = await agent_health()
+    provider = ((health or {}).get("modelProvider") or {}).get("provider")
+    if provider == "vertex-ai":
+        selection.update(provider="vertex-ai", model=((health or {}).get("modelProvider") or {}).get("model"))
+        with store.lock:
+            job.trust_selection = selection
+            store.save()
+        if mode != "standard":
+            raise RunRefused(
+                f"This job requires {mode} inference, which only 0G Private Computer provides. The agent is configured "
+                "for Vertex AI, so the document was not sent. Switch the agent to 0g-private-computer."
+            )
+        return None
+
+    try:
+        model = await zerog.preflight(mode, needs_tools=True)
+    except zerog.ZeroGError as exc:
+        selection.update(provider="0g-private-computer", model=zerog.model_for(mode), error=exc.as_dict())
+        with store.lock:
+            job.trust_selection = selection
+            store.save()
+        raise RunRefused(exc.message) from exc
+
+    grant = issue_grant(job.job_id, run_id, mode, model)
+    selection.update(provider="0g-private-computer", model=model)
+    with store.lock:
+        job.trust_selection = selection
+        store.save()
+    return {
+        "baseUrl": f"{s.backend_internal_url}/api/v1/internal/inference/v1",
+        "token": grant.token,
+        "model": model,
+        "trustMode": mode,
+    }
+
+
 async def run_operator(job_id: str, instruction: str) -> None:
     """Background task: one print-operator run for a job, relayed as events."""
     store = get_store()
     job = store.jobs[job_id]
     run_id = new_id("run")
+    inference: dict[str, Any] | None = None
     try:
+        try:
+            inference = await prepare_inference(job, run_id, instruction)
+        except RunRefused as exc:
+            await _handle_harness_event(job, {"type": "agent_finished", "payload": {
+                "runId": run_id, "outcome": "unavailable", "message": f"The print operator did not start: {exc}"}})
+            return
         doc_tuple = None
         if job.document:
-            src = Path(job.document.edited_path or job.document.original_path)
-            if src.exists():
+            src = working_document_path(job.document)
+            if src and src.exists():
                 doc_tuple = (job.document.filename, src.read_bytes())
         defaults = store.shop_config().get("defaults", {})
         finished = False
@@ -126,6 +230,7 @@ async def run_operator(job_id: str, instruction: str) -> None:
             document=doc_tuple,
             defaults=defaults,
             current={k: v for k, v in job.operator_config.items() if v is not None},
+            inference=inference,
         ):
             await _handle_harness_event(job, event)
             finished = finished or event.get("type") == "agent_finished"
@@ -139,6 +244,8 @@ async def run_operator(job_id: str, instruction: str) -> None:
             "message": f"The print operator is unavailable: {exc.message}",
         }})
     finally:
+        if inference:
+            revoke_grant(inference["token"])
         with store.lock:
             job.run_active = False
             store.save()
@@ -170,8 +277,13 @@ def create_quote(job: JobRecord) -> QuoteRecord:
         raise QuoteError("UPLOAD_FAILED", "Upload a document before requesting a quote.")
     if not job.config_validated:
         raise QuoteError("POLICY_VIOLATION", "The print configuration has not been validated yet.", 409)
-    path = Path(job.document.edited_path or job.document.original_path)
-    pages = job.document.page_count or count_pages(path, job.document.format)
+    if job.document.edit_status == "pending_review":
+        raise QuoteError("POLICY_VIOLATION", "Review the edited document (approve it or keep the original) before getting a price.", 409)
+    path = printable_document_path(job.document)
+    if path is None:
+        raise QuoteError("UPLOAD_FAILED", "The document was deleted under the retention policy; upload it again.", 410)
+    pages = count_pages(path, job.document.format) if path != Path(job.document.original_path) else (
+        job.document.page_count or count_pages(path, job.document.format))
     if not pages:
         raise QuoteError(
             "UNSUPPORTED_FORMAT",
@@ -279,7 +391,9 @@ async def try_execute(job_id: str) -> dict[str, Any]:
             store.save()
         return {"state": "blocked", "pending": ["print_configuration"], "message": " ".join(errors)}
 
-    path = Path(job.document.edited_path or job.document.original_path)
+    path = printable_document_path(job.document)
+    if path is None or not path.exists() or job.document.edit_status == "pending_review":
+        return {"state": "blocked", "pending": ["printable_document"], "message": "The document to print is not available or awaits review."}
     try:
         result = await submit_print(job.operator_config, path.read_bytes())
     except ServiceError as exc:

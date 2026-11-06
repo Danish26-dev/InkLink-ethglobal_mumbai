@@ -68,6 +68,13 @@ class DocumentRecord:
     page_count: int | None = None
     review_recommended: bool = False
     notes: list[str] = field(default_factory=list)
+    # none | pending_review | approved | rejected. The original file is never
+    # modified; an edited copy is used only after the customer approves it.
+    edit_status: str = "none"
+    # Local sensitivity classification (labels and counts only, never content).
+    classification: dict[str, Any] | None = None
+    # Files deleted under the retention policy.
+    purged: bool = False
 
 
 @dataclass
@@ -130,6 +137,12 @@ class JobRecord:
     run_active: bool = False
     submission: dict[str, Any] | None = None
     messages: list[dict[str, Any]] = field(default_factory=list)
+    # Trust mode the customer asked for (may only raise the required mode).
+    requested_trust_mode: str | None = None
+    # Last trust-mode selection (required / effective / reason).
+    trust_selection: dict[str, Any] | None = None
+    # Metadata of 0G calls for this job (no prompts, no completions).
+    inference_log: list[dict[str, Any]] = field(default_factory=list)
 
 
 class Store:
@@ -203,6 +216,8 @@ class Store:
             "pricePerPageMonochrome": s.price_per_page_monochrome,
             "pricePerPageColor": s.price_per_page_color,
             "acceptingOrders": True,
+            # Shop-wide floor for 0G trust mode; null = follow the document policy.
+            "minimumTrustMode": None,
             "defaults": {
                 "paperSize": "A4",
                 "colorMode": "monochrome",

@@ -27,6 +27,8 @@ from .config import get_settings
 from .documents import count_pages, detect_format, is_valid_docx, safe_filename
 from .jobs import QuoteError, add_message, contract_print_config, create_quote, job_dir, quote_contract, quote_expired, start_operator_run
 from .security import new_token
+from .sensitivity import classify_document
+from .config import TRUST_MODES
 from .store import DocumentRecord, HandoffRecord, JobRecord, Principal, get_store, iso_from_epoch, new_id, now_iso
 from .views import job_status, job_view, shop_channel, shop_contract
 
@@ -131,6 +133,8 @@ async def upload_document(
         size=len(data),
         original_path=str(path),
         page_count=count_pages(path, fmt),
+        # Classified locally, before any content can reach a model.
+        classification=classify_document(path, fmt),
     )
     resp = {"documentId": doc.document_id, "jobId": job.job_id, "filename": filename, "format": fmt, "size": len(data), "status": "uploaded"}
     with store.lock:
@@ -205,10 +209,69 @@ async def get_document(job_id: str, ticket: str, version: str = "current") -> Fi
     if not job or not job.document:
         raise api_error(404, "JOB_NOT_FOUND", "No document for this job.")
     doc = job.document
+    if doc.purged:
+        raise api_error(410, "JOB_NOT_FOUND", "The document was deleted under the retention policy.")
     chosen = doc.original_path if version == "original" or not doc.edited_path else doc.edited_path
     media = "application/pdf" if doc.format == "pdf" else "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
     disposition = "inline" if doc.format == "pdf" else "attachment"
     return FileResponse(chosen, media_type=media, filename=doc.filename, content_disposition_type=disposition)
+
+
+# ───────────── edited-document review (original stays intact) ─────────────
+
+@router.post("/jobs/{job_id}/document/approve")
+async def approve_edited_document(job_id: str, principal: Principal = Depends(web_principal)) -> dict[str, Any]:
+    store = get_store()
+    job = job_for(principal, job_id)
+    doc = job.document
+    if not doc or doc.edit_status != "pending_review":
+        raise api_error(409, "POLICY_VIOLATION", "There is no edited document waiting for review.")
+    with store.lock:
+        doc.edit_status = "approved"
+        doc.page_count = count_pages(Path(doc.edited_path), doc.format) or doc.page_count
+        add_message(job, "system", "You approved the edited document. It will be priced and printed.")
+        store.touch(job)
+        store.save()
+    events.publish_job_status(job)
+    return job_view(job)
+
+
+@router.post("/jobs/{job_id}/document/reject")
+async def reject_edited_document(job_id: str, principal: Principal = Depends(web_principal)) -> dict[str, Any]:
+    store = get_store()
+    job = job_for(principal, job_id)
+    doc = job.document
+    if not doc or doc.edit_status != "pending_review":
+        raise api_error(409, "POLICY_VIOLATION", "There is no edited document waiting for review.")
+    with store.lock:
+        if doc.edited_path:
+            Path(doc.edited_path).unlink(missing_ok=True)
+        doc.edited_path = None
+        doc.edit_status = "rejected"
+        add_message(job, "system", "You kept the original document. The edited version was deleted.")
+        store.touch(job)
+        store.save()
+    events.publish_job_status(job)
+    return job_view(job)
+
+
+# ───────────── privacy preference (can only make inference stricter) ─────────────
+
+class PrivacyIn(BaseModel):
+    requestedTrustMode: str | None = None
+
+
+@router.put("/jobs/{job_id}/privacy")
+async def set_privacy(job_id: str, body: PrivacyIn, principal: Principal = Depends(web_principal)) -> dict[str, Any]:
+    if body.requestedTrustMode is not None and body.requestedTrustMode not in TRUST_MODES:
+        raise api_error(400, "POLICY_VIOLATION", "requestedTrustMode must be standard, verified, private or null.")
+    store = get_store()
+    job = job_for(principal, job_id)
+    with store.lock:
+        job.requested_trust_mode = body.requestedTrustMode
+        store.touch(job)
+        store.save()
+    return job_view(job)
 
 
 # ───────────── Contract 4: quote + customer approval ─────────────

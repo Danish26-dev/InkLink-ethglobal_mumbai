@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from . import zerog
 from .clients import agent_health
 from .config import get_settings
 from .jobs import quote_contract
@@ -31,7 +32,13 @@ def job_view(job: JobRecord) -> dict[str, Any]:
             "pageCount": doc.page_count,
             "reviewRecommended": doc.review_recommended,
             "notes": doc.notes,
+            "editStatus": doc.edit_status,
+            "available": not doc.purged,
+            "classification": None
+            if not doc.classification
+            else {k: doc.classification.get(k) for k in ("level", "categories", "reason")},
         },
+        "privacy": privacy_view(job),
         "operatorConfig": job.operator_config,
         "configValidated": job.config_validated,
         "quote": quote_contract(quote) if quote else None,
@@ -42,6 +49,24 @@ def job_view(job: JobRecord) -> dict[str, Any]:
         "submission": job.submission,
         "createdAt": job.created_at,
         "updatedAt": job.updated_at,
+    }
+
+
+def privacy_view(job: JobRecord) -> dict[str, Any]:
+    """Trust-mode decision and 0G call metadata. Never includes keys or content."""
+    sel = job.trust_selection or {}
+    last = job.inference_log[-1] if job.inference_log else None
+    return {
+        "requestedTrustMode": job.requested_trust_mode,
+        "selection": None
+        if not sel
+        else {k: sel.get(k) for k in (
+            "requiredTrustMode", "requestedTrustMode", "shopMinimumTrustMode", "effectiveTrustMode",
+            "reason", "raisedBy", "documentLevel", "provider", "model", "error", "at")},
+        "inferenceCalls": len(job.inference_log),
+        "lastInference": None
+        if not last
+        else {k: last.get(k) for k in ("at", "trustMode", "model", "ok", "provider", "requestId", "teeVerified", "errorCode")},
     }
 
 
@@ -71,19 +96,34 @@ def shop_contract() -> dict[str, Any]:
 
 
 async def agent_status() -> dict[str, Any]:
+    """Agent reachability plus the backend's own 0G configuration (no secrets)."""
+    s = get_settings()
+    zg = zerog.status()
+    configured = [m for m, v in zg["modes"].items() if v["configured"]]
+    base = {"zeroG": zg}
     health = await agent_health()
     if not health:
-        return {"available": False, "provider": "unknown", "model": None, "trustMode": None,
+        return {**base, "available": False, "provider": "unknown", "model": None, "trustMode": None,
                 "reason": "The print operator service is not reachable."}
     mp = health.get("modelProvider") or {}
     runs = bool(health.get("operatorRunsEnabled"))
-    available = bool(mp.get("available")) and runs
-    reason = mp.get("reason") or (None if runs else "AGENT_SERVICE_TOKEN is not configured on the agent service.")
+    provider = mp.get("provider", "unknown")
+    if not runs:
+        reason = "AGENT_SERVICE_TOKEN is not configured on the agent service."
+        available = False
+    elif provider == "0g-private-computer":
+        available = bool(configured)
+        reason = None if available else "No ZERO_G_STANDARD/VERIFIED/PRIVATE_API_KEY is configured on the backend."
+    else:
+        available = bool(mp.get("available"))
+        reason = mp.get("reason")
+    default = s.zero_g_default_trust_mode
     return {
+        **base,
         "available": available,
-        "provider": mp.get("provider", "unknown"),
-        "model": mp.get("model"),
-        "trustMode": mp.get("trustMode"),
+        "provider": provider,
+        "model": zg["modes"].get(default, {}).get("model") if provider == "0g-private-computer" else mp.get("model"),
+        "trustMode": default if provider == "0g-private-computer" else None,
         "reason": None if available else reason,
     }
 

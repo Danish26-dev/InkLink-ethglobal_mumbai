@@ -13,7 +13,7 @@ from pydantic import BaseModel, Field
 from . import events
 from .auth import api_error, job_for, shop_principal
 from .clients import ServiceError, list_printers
-from .config import get_settings
+from .config import TRUST_MODES, get_settings
 from .jobs import add_message, try_execute
 from .security import build_qr_payload
 from .store import Principal, get_store
@@ -116,23 +116,73 @@ class ShopConfigIn(BaseModel):
     description: str = Field("", max_length=280)
     pricePerPageMonochrome: str
     pricePerPageColor: str
+    # Shop-wide floor for 0G inference; it can only make runs stricter.
+    minimumTrustMode: str | None = None
 
 
 @router.get("/config")
 async def get_config(_: Principal = Depends(shop_principal)) -> dict[str, Any]:
     cfg = get_store().shop_config()
-    return {k: cfg[k] for k in ("name", "description", "pricePerPageMonochrome", "pricePerPageColor", "defaults")}
+    return {k: cfg.get(k) for k in ("name", "description", "pricePerPageMonochrome", "pricePerPageColor", "minimumTrustMode", "defaults")}
 
 
 @router.put("/config")
 async def put_config(body: ShopConfigIn, _: Principal = Depends(shop_principal)) -> dict[str, Any]:
     if not _MONEY.match(body.pricePerPageMonochrome) or not _MONEY.match(body.pricePerPageColor):
         raise api_error(400, "POLICY_VIOLATION", "Prices must be decimal strings like 2.00.")
+    if body.minimumTrustMode is not None and body.minimumTrustMode not in TRUST_MODES:
+        raise api_error(400, "POLICY_VIOLATION", "minimumTrustMode must be standard, verified, private or null.")
     store = get_store()
     with store.lock:
         store.shop.update(body.model_dump())
         store.save()
     return await get_config()
+
+
+@router.get("/hardware")
+async def hardware(_: Principal = Depends(shop_principal)) -> dict[str, Any]:
+    """Printer adapter reachability, discovered printers and per-job device state."""
+    store = get_store()
+    active = [j for j in store.jobs.values() if j.status in ("awaiting_execution", "executing")]
+    return {
+        "printerAdapter": {**(await _printers()), "url": get_settings().printer_agent_url},
+        "jobs": [
+            {"jobId": j.job_id, "status": j.status, "deviceStatus": j.device_status,
+             "printerId": j.operator_config.get("printerId"), "submission": j.submission}
+            for j in sorted(active, key=lambda j: j.updated_at, reverse=True)
+        ],
+    }
+
+
+@router.get("/payments")
+async def payments(_: Principal = Depends(shop_principal)) -> dict[str, Any]:
+    """Payments recorded by this backend. `settled` only ever comes from a verified callback."""
+    s = get_settings()
+    store = get_store()
+    items = []
+    for p in store.payments.values():
+        job = store.jobs.get(p.job_id)
+        quote = store.quotes.get(p.quote_id)
+        items.append({
+            "paymentId": p.payment_id, "jobId": p.job_id, "quoteId": p.quote_id, "status": p.status,
+            "amountUsdc": p.amount_usdc, "amountInr": quote.inr if quote else None,
+            "transactionId": p.transaction_id, "hashscanUrl": p.hashscan_url,
+            "jobStatus": job.status if job else None,
+        })
+    awaiting = [
+        {"jobId": j.job_id, "status": j.status, "paymentStatus": j.payment_status,
+         "amountInr": store.quotes[j.quote_id].inr if j.quote_id in store.quotes else None}
+        for j in store.jobs.values() if j.status == "awaiting_payment"
+    ]
+    return {
+        "configured": s.payments_configured,
+        "network": "hedera_testnet",
+        "merchantAccountId": s.merchant_account_id or None,
+        "settlementAsset": "HTS-USDC",
+        "inrToUsdcRate": s.inr_to_usdc_rate or None,
+        "payments": items,
+        "awaitingPayment": awaiting,
+    }
 
 
 @router.get("/pairing-qr")

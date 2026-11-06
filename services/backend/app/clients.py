@@ -34,8 +34,12 @@ async def stream_operator_run(
     document: tuple[str, bytes] | None,
     defaults: dict[str, Any],
     current: dict[str, Any],
+    inference: dict[str, Any] | None = None,
 ) -> AsyncIterator[dict[str, Any]]:
-    """Yield HarnessEvents from POST /api/operator/runs (NDJSON)."""
+    """Yield HarnessEvents from POST /api/operator/runs (NDJSON).
+
+    `inference` carries the per-run grant for the backend's 0G gateway (no 0G key).
+    """
     s = get_settings()
     if not s.agent_service_token:
         raise ServiceError("AGENT_NOT_CONFIGURED", "AGENT_SERVICE_TOKEN is not configured on the backend.")
@@ -46,6 +50,8 @@ async def stream_operator_run(
         "defaults": json.dumps(defaults),
         "current": json.dumps(current),
     }
+    if inference:
+        data["inference"] = json.dumps(inference)
     files = {"file": (document[0], document[1])} if document else None
     timeout = httpx.Timeout(connect=5.0, read=300.0, write=60.0, pool=5.0)
     try:

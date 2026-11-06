@@ -60,8 +60,33 @@ def resolve_principal(authorization: str | None) -> Principal:
     return principal
 
 
-async def any_principal(authorization: str | None = Header(default=None)) -> Principal:
-    return resolve_principal(authorization)
+_LOOPBACK = {"127.0.0.1", "::1", "localhost"}
+
+
+def is_local_request(request: Request) -> bool:
+    """True only for requests that originate on this computer.
+
+    A dev proxy (Vite) forwards the browser's address in X-Forwarded-For; any
+    non-loopback hop there (e.g. a phone on the LAN) makes the request remote.
+    """
+    host = request.client.host if request.client else ""
+    if host not in _LOOPBACK:
+        return False
+    forwarded = request.headers.get("x-forwarded-for", "")
+    hops = [h.strip() for h in forwarded.split(",") if h.strip()]
+    return all(h in _LOOPBACK for h in hops)
+
+
+def local_shop_principal(request: Request, authorization: str | None) -> Principal | None:
+    """Tokenless shop access from the shop computer, when SHOP_LOCAL_ACCESS is on."""
+    s = get_settings()
+    if s.shop_local_access and not _bearer(authorization) and is_local_request(request):
+        return Principal(kind="shop", ref=s.shop_id, expires_at=float("inf"))
+    return None
+
+
+async def any_principal(request: Request, authorization: str | None = Header(default=None)) -> Principal:
+    return local_shop_principal(request, authorization) or resolve_principal(authorization)
 
 
 async def web_principal(authorization: str | None = Header(default=None)) -> Principal:
@@ -78,8 +103,11 @@ async def native_principal(authorization: str | None = Header(default=None)) -> 
     return p
 
 
-async def shop_principal(authorization: str | None = Header(default=None)) -> Principal:
+async def shop_principal(request: Request, authorization: str | None = Header(default=None)) -> Principal:
     s = get_settings()
+    local = local_shop_principal(request, authorization)
+    if local:
+        return local
     if not s.shop_admin_token:
         raise api_error(503, "UNAUTHORIZED", "SHOP_ADMIN_TOKEN is not configured on the backend.")
     p = resolve_principal(authorization)
