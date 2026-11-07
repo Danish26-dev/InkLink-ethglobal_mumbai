@@ -122,8 +122,8 @@ string** (UTF-8) and issues a session:
   "sessionToken": "<opaque, >=16 chars>", "sessionExpiresAt": "ISO-8601" }
 ```
 
-`signedChallenge`/`gatewayId` are agreed. **`sessionToken`/`sessionExpiresAt` are my proposed
-names for the session fields; please confirm.** The app trusts nothing until the signature
+`signedChallenge`/`gatewayId` are agreed, and so are `sessionToken`/`sessionExpiresAt`: the backend
+(`services/backend/app/routes_native.py`) returns exactly these fields. The app trusts nothing until the signature
 verifies against the QR's key and `gatewayId` matches. On a 401 the app silently re-runs this
 handshake once and retries.
 
@@ -171,7 +171,8 @@ Flow: `POST /jobs` → `POST /documents` → `POST /jobs/{id}/quote` → `POST /
 
 Backend policy (agreed): rate snapshot valid 5 minutes, USDC to 6 decimals, **round up**, FX
 provider configurable, **quote expiry is the payment deadline**. The app only displays this.
-`rate` is read as USDC per 1 INR in the mock; please confirm the direction you intend.
+`rate` is USDC per 1 INR (confirmed by the backend owner; the deployed rate is 0.012, so 2.00 INR
+quotes as 0.024 USDC).
 
 ### Contract 5 — device-signed authorization
 
@@ -231,7 +232,7 @@ account as `payTo`, asset USDC `0.0.429274`, network `hedera:testnet`, then Bloc
 verify/settle. A successful payment only means payment was accepted; it never implies the printer
 finished. Prices come from the backend via a lookup, see below.
 
-**PROPOSED, not yet agreed:** `GET /api/v1/internal/jobs/{jobId}/payment-requirements`
+**Agreed and implemented by the backend:** `GET /api/v1/internal/jobs/{jobId}/payment-requirements`
 (`Authorization: Bearer <BACKEND_API_TOKEN>`) →
 `{ "jobId", "merchantAccountId": "0.0.X", "amount": "0.10", "expiresAt": "ISO-8601" }`.
 The URL is configuration on the gate (`REQUIREMENTS_URL_TEMPLATE`), so the real name can differ.

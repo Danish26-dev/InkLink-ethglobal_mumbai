@@ -14,7 +14,7 @@ blockchain settlement (dev rule 8).
 | FX policy | 5 min snapshot, 6 dp, round **up**, quote expiry = payment deadline, provider configurable | Mock follows it; real FX is the backend's |
 | Merchant endpoint | Node x402 gate behind the backend; **not** hand-rolled in FastAPI | Done (`npm run gate`) |
 | Paid route | `POST /api/v1/jobs/{jobId}/execute`, exact USDC, shop `payTo`; payment ≠ job completed | Done |
-| Merchant account | XYZ provides it, funded, associated with USDC | **Pending (XYZ)** |
+| Merchant account | XYZ provides it, funded, associated with USDC | Done: shop wallet `0.0.11227614`, USDC associated, receives the payments |
 | Facilitator | Blocky402 only, **no fallback** | Done; `FACILITATOR_UNAVAILABLE` on outage |
 | Callback | `POST /api/v1/internal/payment-settled`, HMAC over raw body with `X-Inklink-Timestamp`/`-Signature`, 5-min window, retries with backoff, `paymentId` idempotency | Done on the agent; receiver reference in mock |
 | Status enums | As listed in API_CONTRACTS.md; settlement → `awaiting_execution` | Done |
@@ -28,9 +28,9 @@ blockchain settlement (dev rule 8).
 | Identity | Anonymous per-install id | Derived from the device key |
 | Authorization | **Device-key Ed25519 signature**, explicit approval | Done end to end; verified by the agent |
 | Uploads | `Idempotency-Key` honored by the gateway | App sends it; mock honors it |
-| HCS | Backend publishes from the signed callback; one shared topic, I create none | Nothing to build here |
+| HCS | The backend publishes job-lifecycle events to its own topic. Separately, the payment agent writes a spend-audit entry per verified payment to its own topic `0.0.11339168` (submit key = agent key, no admin key) | Agent audit log done and live; the backend's lifecycle topic is the backend's |
 | Registry fields | Incl. `payerAccount`, real `transactionId`, derived HashScan URL | In the callback event |
-| Repo | https://github.com/Danish26-dev/InkLink-ethglobal_mumbai | **Not pushed yet** |
+| Repo | https://github.com/Danish26-dev/InkLink-ethglobal_mumbai | Pushed; both developers commit directly to `main` |
 | Handles | XYZ will send; I won't invent placeholders | README keeps `_TBD_` |
 
 ## Module status
@@ -38,13 +38,31 @@ blockchain settlement (dev rule 8).
 | Module | Status |
 |--------|--------|
 | `packages/shared-schemas` | Contracts, wire format (canonical JSON, Base64URL), authorization, callback headers/event. ESM (`"type":"module"`). |
-| `services/payment-agent` | Bearer auth, device-signature verification, backend-supplied intent, resource allowlist, exact-match x402 policy, mirror-node verification, spend reservation, HMAC callback with retries, x402 gate, durable state file with restart recovery (re-verifies claimed transactions, never releases spend when the outcome is unknown, resends undelivered callbacks). HCS spend audit log (agent-signed topic, no admin key). OfflinePay settle endpoint, x402 endpoint discovery with a 402 price check before signing, fail-fast secret config, no over-limit or double payment under concurrency, spend kept once a transfer is signed. **114 tests pass.** |
-| `apps/mobile` | Expo SDK 58. Camera QR scan, real Ed25519 verification, challenge-response pairing, session auth with re-handshake, reconnect to paired shops by pinned key, upload progress with idempotent retry, device key in secure storage, signed authorization, quote with USDC settlement + deadline, 12 screens, OfflinePay vouchers, device-proof pairing (stable `native_dev_` identity), print options, OfflinePay "Pay later" screen. **87 tests pass**; typecheck clean; Android and web bundles compile. **Not confirmed on a physical phone.** |
+| `services/payment-agent` | Bearer auth, device-signature verification, backend-supplied intent, resource allowlist, exact-match x402 policy, mirror-node verification, spend reservation, HMAC callback with retries, x402 gate, durable state file with restart recovery (re-verifies claimed transactions, never releases spend when the outcome is unknown, resends undelivered callbacks). HCS spend audit log (agent-signed topic, no admin key). OfflinePay settle endpoint, x402 endpoint discovery with a 402 price check before signing, fail-fast secret config, no over-limit or double payment under concurrency, spend kept once a transfer is signed, and a payment whose settlement response was lost is resolved by a mirror-node search. **120 tests pass.** Deployed on Cloud Run (the lost-response resolver is committed but not yet in the deployed image). |
+| `apps/mobile` | Expo SDK 58. Camera QR scan, real Ed25519 verification, challenge-response pairing, session auth with re-handshake, reconnect to paired shops by pinned key, upload progress with idempotent retry, device key in secure storage, signed authorization, quote with USDC settlement + deadline, 12 screens, OfflinePay vouchers, device-proof pairing (stable `native_dev_` identity), print options, OfflinePay "Pay later" screen. **87 tests pass**; typecheck clean; Android and web bundles compile. **Confirmed on a physical Android phone** (staging APK against the Cloud Run backend): an x402 payment, tx `0.0.7162784@1794008216.704679762`, and an OfflinePay promise settled on Hedera, tx `0.0.7162784@1794008511.539597966`. |
 | `services/mock-gateway` | Mock backend: signed QR, pairing, sessions, FX (mock rate, rounds up), agent calls, callback receiver, gate requirements endpoint. **11 tests pass.** |
 
 ## Verified on Hedera testnet (real settlement)
 
-One real x402 payment was run with `npm run demo:pay` (2026-11-05):
+**Current state.** Real USDC settlements on Hedera testnet have run in three ways, all
+`SUCCESS` on the mirror node, each with a matching entry in the agent's HCS audit topic
+`0.0.11339168`. The full list with HashScan links is in the "Proof" table of the root `README.md`
+(Hedera section):
+
+- **From a physical phone, through the deployed cloud stack:** x402 and OfflinePay, one each.
+- **Through the deployed cloud stack, driven by the app's own API client:** several payments and a
+  voucher, including the resend-is-idempotent check.
+- **`npm run demo:pay`** against a stand-in shop account, including the refusal case
+  (`-- --negative`), where the agent refuses to sign and nothing moves.
+
+What is **not** verified live: a page physically printing (the shop gateway and printer are not
+connected yet), and 0G on-chain records (the contract is not deployed). Neither affects the Hedera
+payments.
+
+### First run (history)
+
+The first real settlement, kept as a record of how it was done. One real x402 payment was run with
+`npm run demo:pay` (2026-11-05):
 
 - Transaction: `0.0.7162784@1793916490.190691897`
   (https://hashscan.io/testnet/transaction/0.0.7162784@1793916490.190691897)
@@ -78,16 +96,31 @@ Blocky402 facilitator (24 checks, `npm run headless` in `apps/mobile`):
 
 ## NOT done
 
-- **A real funded settlement through the real backend and the real merchant account.** One testnet
-  settlement exists (see above), but it used a stand-in merchant and the demo script.
-- Gateway TLS + certificate/public-key pinning (production).
-- BLE. HCS job-lifecycle events (backend's; the agent already publishes its own spend audit log to topic `0.0.11339168`). OfflinePay: the core and the agent settle endpoint (`POST /api/v1/offline-payments/settle`) are built and tested. The backend endpoint `POST /api/v1/offline-payments` is agreed but not built yet. On-device SLM and document editing were dropped from the app (team decision): users pick copies, page range, colour and paper size directly.
-- The real backend/gateway integration (waiting on XYZ's implementation).
+Done since the first version of this file (so they are no longer gaps): a funded settlement through
+the real backend and the real shop account (phone and cloud); the backend's OfflinePay endpoint
+(`POST /api/v1/offline-payments`, `services/backend/app/offline_pay.py`) and the agent's settle
+endpoint, proven live; the real backend and gateway integration, deployed on Cloud Run.
 
-## Frozen contracts (team lead, round 3)
+Still not done:
 
-Frozen for review: nothing merges to `main` until the contracts and integration tests are reviewed
-together. All 13+ commits stay on `feat/native-app-hedera-x402`.
+- Gateway TLS + certificate/public-key pinning (production). The staging app already reaches the
+  cloud backend over HTTPS; plain HTTP is only used for the local-network dev path.
+- BLE discovery (QR + local Wi-Fi only, per team decision).
+- The shop printer is not connected yet, so a paid job waits at `awaiting_execution` until the shop
+  gateway runs (backend's side). 0G on-chain records need the 0G contract deployed (backend's side).
+- Request timeouts on the payment path, and re-sending a failed callback without a restart.
+- On-device SLM and document editing were dropped from the app (team decision): users pick copies,
+  colour, paper size, orientation and sides directly. The backend prices and prints the whole
+  document, so the app has no page-range option.
+
+## Frozen contracts (team lead, round 3) — historical
+
+> **Historical.** This was the contract freeze before the first integration. The contracts were
+> reviewed and merged, and both developers now commit directly to `main`. Statuses in the table
+> below are as they were at the freeze; the current state is in the sections above.
+
+Frozen for review: nothing merged to `main` until the contracts and integration tests were reviewed
+together. The commits were kept on `feat/native-app-hedera-x402` meanwhile.
 
 | # | Decision | Status |
 |---|----------|--------|
@@ -106,13 +139,19 @@ together. All 13+ commits stay on `feat/native-app-hedera-x402`.
 
 ## Still open
 
-1. **Merchant account ID** from XYZ (private channel), then a coordinated funded settlement test.
-2. Integration against the **actual Inklink backend**; the mock gateway is a reference, not the final target.
-3. How the backend refreshes the QR on expiry and revokes session tokens.
-4. Production TLS and certificate or public-key pinning.
-## Action items for Omkar (blocks the first real settlement)
+1. How the backend refreshes the QR on expiry and revokes session tokens (the QR is valid for 1
+   hour and a session for 15 minutes).
+2. Production TLS and certificate or public-key pinning.
+3. The shop gateway and printer going live, and the 0G contract deployment (backend's side).
+
+(Closed since the freeze: the merchant account ID, and integration against the actual Inklink
+backend. The mock gateway remains the executable reference and the offline dev stack.)
+## Setting up your own funded wallet
+
+To reproduce a real settlement yourself (these steps were completed for the live deployment):
 
 1. Create a dedicated ECDSA testnet account at https://portal.hedera.com/ and claim test HBAR.
 2. Fill `services/payment-agent/.env` (never commit it).
 3. `npm run setup:wallet -- --associate`, mint test USDC at https://faucet.circle.com/.
-4. Get the merchant account from XYZ; `npm run setup:wallet` until ready, then `npm run demo:pay`.
+4. Point `MERCHANT_ACCOUNT_ID` at a USDC-associated shop account (`npm run setup:merchant` makes a
+   stand-in), run `npm run setup:wallet` until ready, then `npm run demo:pay`.

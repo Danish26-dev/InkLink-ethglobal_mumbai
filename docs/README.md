@@ -19,18 +19,22 @@ Built for **ETHGlobal Mumbai** (Nov 5–7, 2026).
 
 ## This repository
 
-This repo contains the full Inklink system, split across workstreams. **This checkout
-focuses on Omkar's two modules** — the native app and the Hedera x402 payment system —
-plus the shared contracts and docs the whole team depends on.
+This repo contains the full Inklink system, split across workstreams. Omkar's modules are the native app (`apps/mobile`) and the Hedera x402 payment system (`services/payment-agent`, plus the mock gateway used as a dev reference). The main lead's (XYZ) modules sit in the same repository; the folder map below lists them.
 
 ```
 inklink/
 ├── src/, index.html, ...    # Cinematic landing page (Vite + React + Three.js) [Danish]
 ├── apps/
-│   └── mobile/              # React Native + Expo (SDK 58) customer app   [Omkar]
+│   ├── mobile/              # React Native + Expo (SDK 58) customer app   [Omkar]
+│   └── web/                   # customer web app, shop dashboard, jury page [XYZ]
 ├── services/
 │   ├── payment-agent/       # Hedera x402 Payment Agent + x402 gate (Node) [Omkar]
-│   └── mock-gateway/        # MOCK backend/gateway for dev + reference     [Omkar]
+│   ├── mock-gateway/        # MOCK backend/gateway for dev + reference     [Omkar]
+│   ├── backend/               # FastAPI backend (quotes, sessions, jobs, OfflinePay ledger) [XYZ]
+│   ├── shop-gateway/          # shop computer connector to the printer adapter [XYZ]
+│   ├── local-printer-agent/   # printer adapter on the shop computer [XYZ]
+│   ├── document-engine/       # document processing [XYZ]
+│   └── strands-agent/         # print operator agent [XYZ]
 ├── packages/
 │   └── shared-schemas/      # TypeScript types for API Contracts 1–8      [shared]
 ├── docs/
@@ -47,10 +51,7 @@ inklink/
 └── README.md
 ```
 
-Modules owned by the main lead (XYZ) — FastAPI backend, local gateway, Document
-Engine, 0G integration, 0G Galileo registry, ESP32 firmware — are not in this checkout yet. They
-integrate against the contracts in `packages/shared-schemas` and [`API_CONTRACTS.md`](API_CONTRACTS.md);
-`services/mock-gateway` is the reference for how the backend should behave.
+The main lead's (XYZ) modules (FastAPI backend, shop gateway, printer adapter, document engine, print operator agent, web app, deployment scripts, contracts) are in this repository and are described in their own folders and docs. They integrate with Omkar's modules through the contracts in `packages/shared-schemas` and [`API_CONTRACTS.md`](API_CONTRACTS.md). `services/mock-gateway` remains the executable reference and the offline dev stack.
 
 ## Team
 

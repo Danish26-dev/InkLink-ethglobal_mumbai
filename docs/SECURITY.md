@@ -73,11 +73,18 @@ pairing session.
 
 ## Known limits (honest)
 
-- Agent state (authorizations, nonces, payments, pending callbacks) is a single JSON file written
-  atomically after every change (`AGENT_STATE_FILE`). It survives restarts, and on startup the agent
-  re-verifies payments that were mid-flight, re-sends undelivered callbacks, and marks payments whose
-  outcome cannot be known as failed **with the spend kept**. It is not a database: one process only,
-  no encryption at rest (it holds no keys), and it needs backups for anything beyond a demo.
+- Agent state (authorizations, nonces, payments, pending callbacks) is a single JSON file, written
+  to a temporary file and renamed over the old one after every change (`AGENT_STATE_FILE`). It
+  survives restarts, and on startup the agent re-verifies payments that were mid-flight, re-sends
+  undelivered callbacks, and marks payments whose outcome cannot be known as failed **with the spend
+  kept**. A payment that was signed but whose settlement response was lost (no tx id) is then
+  resolved by searching the mirror node for the exact agent → shop transfer: found means settled;
+  nothing found after the transaction's validity window means the spend is released. It is not a
+  database: one process only, no encryption at rest (it holds no keys), and it needs backups for
+  anything beyond a demo. On the Cloud Run deployment the file lives on a Cloud Storage volume,
+  where a rename is not strictly atomic, and it is rewritten on every change.
+- The payment path has no request timeouts yet (a hung connection leaves a payment `processing`
+  until a restart), and a callback that fails all 8 attempts is re-sent only on the next restart.
 - A corrupt state file stops the agent from starting; it is never silently replaced, because an empty
   state would reset every spending limit.
 - BLE discovery is not implemented (QR + local Wi-Fi only, per team decision).
