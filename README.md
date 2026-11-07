@@ -124,12 +124,65 @@ same deployed services):
 | Payment after the concurrency fixes (HCS entry #6) | [`0.0.7162784@1793990131.418337454`](https://hashscan.io/testnet/transaction/0.0.7162784-1793990131-418337454) |
 | x402 payment, 0.10 USDC agent → shop (HCS entry #1) | [`0.0.7162784@1793967953.517115964`](https://hashscan.io/testnet/transaction/0.0.7162784-1793967953-517115964) |
 | First x402 payment, 0.10 USDC | [`0.0.7162784@1793916490.190691897`](https://hashscan.io/testnet/transaction/0.0.7162784-1793916490-190691897) |
-| Spend-audit log (every entry above) | [topic `0.0.11339168`](https://hashscan.io/testnet/topic/0.0.11339168) |
+| Spend-audit log (the entries cited on this page) | [topic `0.0.11339168`](https://hashscan.io/testnet/topic/0.0.11339168) |
 
 All are `SUCCESS` on the mirror node. Asset: HTS USDC `0.0.429274`. Agent wallet
 `0.0.11330279`, shop wallet `0.0.11227614`, facilitator fee payer `0.0.7162784` (Blocky402).
 Anyone can check a payment: `curl https://testnet.mirrornode.hedera.com/api/v1/transactions/<tx id with dashes>`
 shows the exact USDC transfer, and the HCS topic shows the matching audit entry.
+
+**OfflinePay from the phone** (a signed promise, settled through the same x402 path; see
+[OfflinePay](#offlinepay-pay-later-with-a-signed-promise)):
+[`0.0.7162784@1794008511.539597966`](https://hashscan.io/testnet/transaction/0.0.7162784-1794008511-539597966)
+(payment `offpay_7a06b5a73ce716ea534b02c0`, HCS entry #10).
+
+### Check it yourself in 60 seconds
+
+Everything is on **Hedera testnet**, so check there (a `/mainnet/` link will not find it).
+
+```bash
+# Take the transaction id, swap "@" for "-" and the last "." for "-"
+curl -s https://testnet.mirrornode.hedera.com/api/v1/transactions/0.0.7162784-1794008216-704679762 \
+  | jq '.transactions[0] | {result, token_transfers}'
+```
+
+A correct result has `"result": "SUCCESS"` and a transfer of the exact quoted USDC (token
+`0.0.429274`, 6 decimals, so `24000` = 0.024 USDC) from the agent `0.0.11330279` to the shop
+`0.0.11227614`. The same payment appears in the audit topic:
+
+```bash
+curl -s "https://testnet.mirrornode.hedera.com/api/v1/topics/0.0.11339168/messages?order=desc&limit=5" \
+  | jq -r '.messages[] | "\(.sequence_number) \(.message | @base64d)"'
+```
+
+Look for the entry whose `paymentId` and `transactionId` match, with `type` `inklink.agent_spend`.
+
+### Claim → code → test → proof
+
+| Claim | Code (`services/payment-agent/src`) | Test (`services/payment-agent/test`) | Proof |
+|---|---|---|---|
+| Pays only the exact quoted price, to the right shop, in USDC | `payment-agent.ts` (`gate_price_mismatch`), `signing/signing-service.ts` | `gate-discovery.test.ts` (refuses a different 402 price), `gate.test.ts` (exact atomic amounts) | [`…1793979232.670687781`](https://hashscan.io/testnet/transaction/0.0.7162784-1793979232-670687781); `npm run demo:pay -- --negative` refuses and moves nothing |
+| Customer-signed spend limits it cannot exceed | `device-auth.ts`, `policy.ts` | `policy.test.ts`, `agent.test.ts`, `app-interop.test.ts` | the budget in each HCS entry |
+| No over-limit or double payment under concurrency | `payment-agent.ts` (`initiate`) | `payment-races.test.ts` | logic test |
+| Spend kept once a transfer is signed; a lost response is resolved | `x402-client.ts`, `payment-agent.ts` (`resolveOutcome`) | `payment-races.test.ts`, `lost-settlement.test.ts` | logic test (resolver is committed, not yet in the deployed image) |
+| Success is verified on the mirror node, not taken from the facilitator | `settlement.ts` | `agent.test.ts` (settles only when the mirror node confirms; otherwise not settled, tx kept), `persistence.test.ts` (re-verifies after a restart), `callback.test.ts` (signed callback) | every transaction above |
+| Every spend is logged on Hedera | `hcs-audit.ts` | `hcs-audit.test.ts` | [topic `0.0.11339168`](https://hashscan.io/testnet/topic/0.0.11339168) |
+| A real phone pays with x402 | `apps/mobile` (`authorize.tsx`), agent, gate | `apps/mobile/test` (`pairing-device`, `payment-flow`) | [`…1794008216.704679762`](https://hashscan.io/testnet/transaction/0.0.7162784-1794008216-704679762) (HCS #9) |
+| A real phone pays with OfflinePay | `offline-settlement.ts`, `apps/mobile/app/offline-pay.tsx` | `offline-settle.test.ts`, `apps/mobile/test/offline-pay*.test.ts` | [`…1794008511.539597966`](https://hashscan.io/testnet/transaction/0.0.7162784-1794008511-539597966) (HCS #10) |
+
+### Known limits
+
+Stated plainly, so the claims above can be trusted:
+
+- **One facilitator** (Blocky402, no fallback) and **testnet only**. Hedera's docs list relying on
+  few facilitators as a risk; the official `x402.org` facilitator and Launa also support
+  `hedera:testnet`, so a fallback would be a contained change in `src/facilitator.ts`.
+- **No request timeouts** on the payment path yet, and a callback that fails all 8 attempts is
+  re-sent only on the next restart.
+- **Not built:** TLS certificate pinning to the shop gateway, and BLE discovery.
+- **Not verified live (the backend's side, not the payment agent's):** a page physically printing
+  (the shop gateway and printer are not connected yet) and 0G on-chain records (the contract is not
+  deployed). Hedera payments do not depend on either.
 
 ### Architecture
 
@@ -179,6 +232,9 @@ Phone app ──signed budget──▶ Inklink backend ──bearer token──�
   returns the same payment instead of paying twice (tests in `test/payment-races.test.ts`).
 - Once a transfer has been signed, any later error keeps the spend reserved and marks that funds
   may have moved. The budget is only freed when nothing was signed or the facilitator refused.
+- If the settlement response is lost (no transaction id), the agent searches the mirror node for the
+  exact agent → shop transfer made after signing. It settles the payment if it finds it, and
+  releases the budget only once the transaction's validity window has passed with no such transfer.
 - A shop allowlist, plus an allowlist of x402 endpoints the agent may pay.
 - An exact-match rule: the agent refuses any 402 that differs from the quoted amount, shop account
   or asset. Live proof: `npm run demo:pay -- --negative`. The gate charged 0.10, the agent was told
@@ -252,7 +308,7 @@ npm run setup:wallet                  # until it says "Ready"
 npm run setup:audit-topic             # once; put the printed id in HCS_AUDIT_TOPIC_ID
 npm run demo:pay                      # real x402 payment; prints the HashScan links
 npm run demo:pay -- --negative        # the agent refuses an amount that does not match
-npm test                              # 114 tests, no network needed
+npm test                              # 120 tests, no network needed
 ```
 
 The shop account must also have USDC associated. For a stand-in shop that you control, run
