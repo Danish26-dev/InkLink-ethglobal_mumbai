@@ -59,14 +59,15 @@ Contract 5 body to `POST /api/v1/payments/authorizations` unchanged (the agent v
 signature). Do not mark a payment `settled` because the agent says so on a status poll; use polling
 only to learn about failures.
 
-## 4. The x402 gate asks you what a job must pay (PROPOSED endpoint)
+## 4. The x402 gate asks you what a job must pay (agreed; implemented by the backend)
 
 `GET /api/v1/internal/jobs/{jobId}/payment-requirements` with `Authorization: Bearer
 <BACKEND_API_TOKEN>` →
 `{"jobId","merchantAccountId":"0.0.X","amount":"0.10","expiresAt":"ISO-8601"}`.
 `amount` must be exactly the stored settlement amount; `merchantAccountId` is the shop's Hedera
 account, **associated with USDC `0.0.429274`**. Name and path are configuration on the gate
-(`REQUIREMENTS_URL_TEMPLATE`), so tell me if you name it differently.
+(`REQUIREMENTS_URL_TEMPLATE`). `services/backend` serves this endpoint at the path above and the
+deployed gate uses it.
 
 ## 5. Receive the settlement callback
 

@@ -5,7 +5,7 @@ Each module is testable on its own, with no hardware and no funded wallet.
 ## Unit and interop tests
 
 ```bash
-cd services/payment-agent && npm test      # 114 tests
+cd services/payment-agent && npm test      # 120 tests
 cd apps/mobile            && npm test      # 87 tests
 cd services/mock-gateway  && npm test      # 11 tests
 ```
@@ -45,6 +45,17 @@ What the tests pin down:
 - **HCS spend audit:** entry contents, retry of unpublished entries on recovery.
 - **Configuration:** the service refuses to start on missing or short (<16 chars) secrets; gate
   allowlist parsing; agent and merchant wallets must differ.
+- **Concurrency and uncertain outcomes** (`payment-races.test.ts`): two payments on one
+  authorization cannot together exceed its total limit; a retried request returns the same payment
+  and pays once; once a transfer is signed, an error keeps the spend and flags that funds may have
+  moved, while an error before signing still releases it.
+- **Lost settlement response** (`lost-settlement.test.ts`): a payment signed but with no tx id is
+  resolved by a mirror-node search: the exact agent → shop transfer is adopted and settled; inside the
+  signing window with nothing found it stays unresolved; after the window it releases the spend.
+  An unrelated transfer (other amount or account) is never adopted.
+- **OfflinePay in the app** (`apps/mobile/test/offline-pay-flow.test.ts`): the phone checks its own
+  limits on a throwaway copy of its ledger, records a voucher only once the backend has it, and
+  frees its limit only on a mirror-node verified settlement.
 
 Not covered by automated tests: the Express route wiring in `services/payment-agent/src/server.ts`
 (the logic behind each route is tested directly).
@@ -78,11 +89,14 @@ npm run demo:pay -- --negative       # overpay attempt: refused, nothing signed
 
 `demo:pay` only reports success if the mirror node shows the USDC transfer to the merchant. Real
 testnet settlements have been run this way; the transaction ids and the HCS audit topic are listed
-in the Hedera x402 section of the root `README.md`. A payment started from the app against the
-cloud backend has not been confirmed yet.
+in the Hedera x402 section of the root `README.md`. Payments started from a physical phone against
+the deployed cloud backend (x402 and OfflinePay) are recorded there too, each verified on the mirror
+node.
 
 ## Mobile app on a device
 
-`npx expo start --lan` and open it in Expo Go (SDK 58). Android and web bundles compile, but the
-app has not yet been confirmed rendering on a physical phone. Camera scanning, secure-store key
-generation and the local-network permission prompt are only exercised on a device.
+For development: `npx expo start --lan` and open it in Expo Go (SDK 58). The Android and web bundles
+compile. A staging APK (`eas build --profile staging`) has been installed and used on a physical
+Android phone: it paired with the shop, signed a spending policy and a voucher with the device key,
+and made the two payments recorded in the README. Camera scanning, secure-store key generation and
+the local-network permission prompt are only exercised on a device, not by the unit tests.

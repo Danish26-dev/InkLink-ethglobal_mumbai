@@ -15,8 +15,8 @@ AI. Hedera payments and AI are optional layers on top.
                  QR + local Wi-Fi                        internal (bearer token)
  Phone app ───────────────────────▶ Inklink backend ───────────────────────▶ Payment Agent
  (React Native)   session token     / shop gateway   ◀── signed callback ──   (Node, signs on Hedera)
-                                   (XYZ; mock-gateway                              │
-                                    stands in for dev)                             ▼
+                                   (XYZ; deployed on Cloud Run;                    │
+                                    mock-gateway = dev stand-in)                   ▼
                                                                               x402 gate ──▶ Blocky402 ──▶ Hedera Testnet
 ```
 
@@ -32,7 +32,7 @@ AI. Hedera payments and AI are optional layers on top.
 ## Native app (`apps/mobile`)
 
 - **Screens** (`app/`, Expo Router): welcome, discovery, scan, connection, document, configure,
-  preview, payment, authorize, payment-status, tracking, history, settings.
+  preview, payment, authorize, payment-status, offline-pay, tracking, history, settings.
 - **State** (`src/state/app-context.tsx`): API client, connection manager, pairing, working job session.
 - **API client** (`src/api/client.ts`): Contracts 1-8 through one base URL, session bearer token,
   automatic re-handshake on a 401.
@@ -57,6 +57,9 @@ AI. Hedera payments and AI are optional layers on top.
 | `x402-client.ts` | Pays an x402 resource using the official `@x402` packages |
 | `settlement.ts` | Mirror-node verification; HMAC-signed callback with retries |
 | `x402-gate.ts`, `gate-requirements.ts`, `gate-server.ts` | The gate and where it learns each job's price |
+| `gate-discovery.ts` | Finds a job's paid endpoint from the gate's x402 discovery document; reads the 402 price before signing |
+| `hcs-audit.ts` | Writes one tamper-evident spend entry per verified payment to the agent's HCS topic |
+| `offline-settlement.ts` | Settles OfflinePay vouchers through the same x402 path; keeps the voucher ledger |
 | `facilitator.ts` | Confirms Blocky402 supports Hedera testnet (no fallback) |
 | `scripts/` | `setup-wallet`, `demo-pay`, `check-facilitator`, dev device |
 
@@ -83,5 +86,7 @@ mock timer standing in for the ESP32.
 
 ## Status
 
-See `INTEGRATION_STATUS.md` for what is verified and what is not (notably: no real funded settlement
-yet, and the app is not yet confirmed on a physical phone).
+See `INTEGRATION_STATUS.md` for what is verified and what is not. In short: real Hedera testnet
+payments (x402 and OfflinePay) have been made from a physical phone through the deployed Cloud Run
+backend, payment agent and x402 gate, each with an HCS audit entry. Not yet verified live: a page
+physically printing (the shop gateway and printer are not connected) and 0G on-chain records.
