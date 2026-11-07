@@ -319,6 +319,88 @@ More detail: `docs/PAYMENT_FLOW.md`, `docs/API_CONTRACTS.md`, `docs/SECURITY.md`
 
 ---
 
+## Live demo
+
+The application is hosted on Google Cloud Run (Mumbai region). No account or wallet is needed to try it.
+
+| What | Link |
+|---|---|
+| Customer portal | https://inklink-web-765131918851.asia-south1.run.app/portal |
+| Judge walkthrough with live checks | https://inklink-web-765131918851.asia-south1.run.app/demo |
+| Jury sandbox (full flow, no login, never prints physically) | https://inklink-web-765131918851.asia-south1.run.app/jury |
+| Backend health | https://inklink-backend-765131918851.asia-south1.run.app/health |
+
+These responded with HTTP 200 on 2026-11-06. What the hosted demo does and does not show:
+
+- Works: upload, 0G-powered instruction handling with trust modes and request IDs, document editing with review, quote, and the payment handoff to the phone app. Real Hedera testnet payments are made from the Inklink mobile app.
+- Does not show: a physical print. That needs the shop gateway and printer adapter running on the shop's computer, and the hosted `/health` currently reports `printer.connected: false`. The jury sandbox can never reach a physical printer by design.
+
+---
+
+## Built on 0G
+
+**Without 0G, Inklink cannot understand a print instruction and has no safe path for sensitive documents: the operator run is refused instead of falling back to a non-private model.** (The jury sandbox has a separate, clearly labelled rule-based operator that uses no model and is refused for real shops.)
+
+### 0G Private Computer in the main user flow
+
+Every AI operator run is an inference on 0G Private Computer (model `glm-5.3`). It is not a side demo. The flow is:
+
+1. The customer uploads a document and writes what they want, for example "2 copies, black and white, A4, double-sided".
+2. The backend classifies the document before any model call and picks a trust mode: `standard`, `verified` or `private`. Sensitive or unreadable documents are forced to `private` (TEE-sealed). The customer can raise the mode but never lower it below what the document needs.
+3. The backend issues the agent a 15-minute inference grant bound to the job, trust mode and model. **The agent never holds a 0G key.** Each model turn goes through the backend's inference gateway, which calls 0G with the key for exactly that mode.
+4. The model proposes structured operations. Deterministic Python code validates and applies them; the model never edits a file.
+
+Code: `services/backend/app/zerog.py` (0G client, `chat_completion`), `services/backend/app/inference.py` (grant and gateway), `services/backend/app/sensitivity.py` (trust-mode policy).
+
+### Request IDs
+
+Each 0G call is logged with its **request ID**, provider, trust mode, model, TEE-verified flag and attestation details. Keys and document content are never logged.
+
+- In the app: Agent Workspace shows a "0G request" row next to the trust mode.
+- In the API: `GET /api/v1/jobs/{jobId}` returns `privacy.lastInference.requestId` and `privacy.inferenceCalls`.
+- The ID comes from the 0G router's trace metadata, or the `ZG-Res-Key` response header when the trace has none.
+
+The verification shown is the router's provider-level TEE attestation. Inklink does not claim to check a per-response signature itself.
+
+### Why a user comes back
+
+This is the product reasoning, not usage data. We have no retention numbers yet.
+
+- Printing is a repeating need (study material, forms, ID copies, office documents), and the awkward part is configuring a printer dialog and paying. Describing it in one sentence is faster the second time.
+- The phone app keeps the paired shop and a local job history, and the web app lists the customer's jobs, so a repeat print starts from a known shop.
+- Private documents are the ones people are most reluctant to hand to a print shop or a chatbot. Sealed processing is the reason to trust this over a USB stick or a public computer.
+- Not built yet: saved print presets, one-tap reprint, and accounts. Customers are anonymous by design.
+
+### Not implemented for 0G
+
+- **iAI account sign-in and per-user credit consumption.** Inference is paid with the operator's own 0G keys. There is no user sign-in with a 0G account and no per-user balance.
+- **On-chain audit on 0G Galileo.** The `InklinkRegistry` contract is written and tested (5 tests) but not deployed, so records queue locally. See `contracts/README.md`.
+
+### Diagram
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant C as Customer
+    participant BE as Backend
+    participant AG as Strands agent
+    participant Z as 0G Private Computer
+    participant DE as Document engine
+    C->>BE: document plus instruction
+    BE->>BE: classify, choose trust mode
+    BE->>AG: start run with inference grant
+    AG->>BE: chat completion (grant, no 0G key)
+    BE->>Z: completion in the chosen mode
+    Z-->>BE: answer plus request id
+    BE-->>AG: answer
+    AG->>DE: validated operations
+    BE-->>C: events with trust mode and 0G request id
+```
+
+More diagrams (system context, hosting, payment, OfflinePay, gateway, states, gates, data model) are in the architecture report, [`docs/ARCHITECTURE_REPORT.md`](docs/ARCHITECTURE_REPORT.md). The earlier native-app and payment architecture note is still at [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
+
+---
+
 ## System architecture
 
 Inklink is not a single cloud app. It joins four parts that can be run and reasoned about separately:
