@@ -341,12 +341,12 @@ Only what the repository actually contains is listed as integrated.
 | Payments | Hedera Testnet, Hedera x402 (`@x402/*`, `@hiero-ledger/sdk`), Blocky402 testnet facilitator, HCS audit topic | Facilitator set by `FACILITATOR_URL`. |
 | 0G chain | `InklinkRegistry.sol` (Solidity 0.8.24), Hardhat, ethers.js, eth-account | Tested. **Not deployed yet**; records queue locally. |
 | Data | SQLite (mobile app), JSON snapshot on a Cloud Storage volume (backend) | |
-| Hardware | Local printer adapter, shop gateway, ESP32-S3 backend endpoints | |
+| Hardware | Local printer adapter, shop gateway | The ESP32-S3 firmware in `hardware/` is published as standalone open-source code (see below). |
 
 Not integrated, despite appearing in plans:
 
 - **Firestore.** The repository has no Firestore code. Backend state is a JSON snapshot.
-- **ESP32-S3 firmware (Arduino, SSD1306 OLED, buttons, LEDs, buzzer).** There is no firmware in this repository. The backend endpoints the device uses are implemented and tested, but the OLED, button, LED and buzzer behaviour is not verified from this source.
+- **ESP32-S3 firmware: published, not part of the application build.** The hardware code (Arduino, SSD1306 OLED, buttons, LEDs, buzzer) is in `hardware/inklink_display` so it is open source too. It is a standalone sketch: nothing in the web app, backend or mobile app builds or depends on it. It has not been compiled in CI, and I have not verified it on a device or in the simulator.
 - **Local SQLite in the gateway**, **local document processing**, and **offline authorized printing** (see the table above).
 - **0G Galileo contract on-chain.** Written and tested, awaiting deployment.
 
