@@ -1,4 +1,4 @@
-# INKLINK: agentic, privacy-aware printing
+# INKLINK: Privacy-first printing at local stationary: AI sets up the job, an agent pays it in USDC on Hedera.
 
 > Your Document. Your Agent. Your Control.
 
@@ -7,24 +7,6 @@ Inklink lets a customer send a document from a browser with no account and no wa
 Built for **ETHGlobal Mumbai** (Nov 5 to 7, 2026). MIT licensed.
 
 **Status in one paragraph.** The customer flow, the 0G-powered operator, the document engine and the Hedera testnet payment path are live and hosted. The shop printing path (gateway and printer adapter), the ESP32 display firmware and the 0G Galileo audit contract are built but not yet running against the hosted stack, so a physical print has not been demonstrated end to end. The table in [Project status](#project-status) is the source of truth, and nothing in this README claims more than it says.
-
-## Contents
-
-- [Live demo](#live-demo)
-- [Built on 0G](#built-on-0g)
-- [Hedera x402: the payment agent](#hedera-x402-the-payment-agent-that-pays-for-print-jobs)
-- [How it works](#how-it-works)
-- [Architecture](#architecture)
-- [Project status](#project-status)
-- [Repository layout](#repository-layout)
-- [Getting started](#getting-started)
-- [Shop hardware and offline-first](#shop-hardware-and-offline-first)
-- [Technology: integrated vs. not](#technology-integrated-vs-not)
-- [Architecture Roadmap](#architecture-roadmap)
-- [Documentation](#documentation)
-- [Landing page](#landing-page)
-- [Team and licence](#team-and-licence)
-- [CROPS](#crops)
 
 ---
 
