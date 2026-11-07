@@ -316,3 +316,153 @@ The shop account must also have USDC associated. For a stand-in shop that you co
 
 More detail: `docs/PAYMENT_FLOW.md`, `docs/API_CONTRACTS.md`, `docs/SECURITY.md` and
 `docs/INTEGRATION_STATUS.md`.
+
+---
+
+## System architecture
+
+Inklink is not a single cloud app. It joins four parts that can be run and reasoned about separately:
+
+1. **Customer applications.** The React PWA (`apps/web`, no login, no wallet) and the React Native / Expo app (`apps/mobile`, holds the device key and authorizes payment).
+2. **AI interpretation and deterministic processing.** The Strands agent (`services/strands-agent`) turns natural language into a structured operation plan. The Python document engine (`services/document-engine`) validates and executes it.
+3. **Payment and verification.** The Hedera x402 payment agent (`services/payment-agent`) and the x402 gate. Settlement is only accepted from the agent's HMAC-signed callback, sent after it checks the Hedera mirror node.
+4. **Shop infrastructure.** The shop gateway (`services/shop-gateway`), the local printer adapter (`services/local-printer-agent`) and the ESP32-S3 status display.
+
+Workflow:
+
+```
+Customer -> shop connection -> document submission -> AI interpretation
+ -> deterministic document processing -> DOCUMENT approval
+ -> shop quotation -> QUOTE approval -> payment -> settlement verification
+ -> shop approval -> local print execution
+```
+
+Document approval and quote approval are separate stages. The backend does not move a job to printing until every gate is satisfied (`try_execute` in `services/backend/app/jobs.py`).
+
+**The LLM never edits a document.** The agent only proposes structured operations. The document engine, which is plain Python, validates each operation against an allow-list and applies it. The original file is never changed, and edited copies need the customer's approval.
+
+### What each shop-side component is
+
+| Component | Role | It is not |
+|---|---|---|
+| Printer | Produces paper. | |
+| Local printer adapter (`local-printer-agent`) | Windows spooler adapter on `127.0.0.1:7777`. Discovers printers and submits a validated PDF. | A job queue or history store. |
+| Shop gateway (`shop-gateway`) | Outbound-only connector. Long-polls the backend, runs only four allow-listed adapter calls, fetches the PDF through a one-time reference, and reports results. Also serves read-only status on the shop LAN for the display. | A durable queue. It decides nothing about authorization. |
+| ESP32-S3 interface | Status display and local interaction for the shop, talking to the backend over authenticated HTTPS (`/api/v1/devices/heartbeat`, `/events`, `/display`). | A PDF renderer, a print gateway, or a payment actor. It never starts or verifies payments. |
+
+### Offline-first: what is implemented and what is not
+
+The intent is to move intelligence toward the physical printer so that printing does not depend on an always-on cloud. This table says how far that has gone today.
+
+| Capability | Status | Evidence / gap |
+|---|---|---|
+| Shop hardware stays on the shop network; only outbound connections | **Implemented** | `shop-gateway` makes outbound calls only. |
+| Backend and printer on the same LAN with no relay (`PRINTER_MODE=direct`) | **Implemented** | `services/backend/app/config.py`. Payment and inference still need internet. |
+| Gateway reconnects with backoff after a network error or backend restart | **Implemented** | `gateway.mjs` (1 s to 30 s with jitter). |
+| Gateway retries reporting a result a few times | **Partial** | Retries are in memory only. A gateway crash loses an unreported result. |
+| Device heartbeat, online/offline detection | **Implemented** | `services/backend/app/devices.py`. |
+| Print completion only from a real device `print_completed` event for a job the backend submitted | **Implemented** | `devices.py`. |
+| Durable outbox with retry for on-chain audit records | **Implemented (backend)** | `chain.py` queues records and sends them when configured. Today 32 are queued because no contract is deployed. |
+| Offline payment promise (OfflinePay voucher) with later settlement | **Implemented (app and backend)** | `apps/mobile/src/offline`, `services/backend/app/offline_pay.py`. A voucher becomes settled only through the signed settlement callback, so it does not bypass payment verification. |
+| Local SQLite persistence | **Mobile app only** | `apps/mobile/src/db/database.ts`. The gateway has no SQLite. The backend persists a JSON snapshot. |
+| Durable local print queue on the shop machine | **Not implemented** | Planned (Phase 2). |
+| Executing a previously authorized job while the internet is down | **Not implemented** | The gateway holds no cached job and no authorization it can verify locally. Printing today needs the backend online. |
+| Idempotent two-way sync, conflict handling, crash recovery for jobs | **Not implemented** | Planned (Phase 2). |
+| Local document processing without the cloud | **Not implemented** | The document engine runs on Cloud Run. Packaging it for the shop machine is planned. |
+
+**Security rule for any future offline mode.** Offline execution must never bypass payment verification or print authorization. A job may run offline only if the backend has already issued an authorization that the gateway can verify locally, for example an expiring, job-bound token signed with a key whose public half the gateway has pinned, issued only after the settlement callback. The gateway must not treat an arbitrary cached job as authorized. That signed authorization does not exist yet.
+
+**What a sync design would need (not built).** A SQLite job table on the shop machine with a state column, an idempotency key per job and event so replays are harmless, a rule that the backend is the source of truth for authorization while the gateway is the source of truth for physical status, retries with backoff, and replay of unsent `print_started`, `print_completed` and `print_failed` events on reconnect. Treat all of this as design work, not a feature.
+
+### Cloud cannot do without vs. local can do
+
+Cloud-dependent today: AI interpretation on 0G Private Computer, document processing, cross-shop discovery, quotation, Hedera x402 initiation and settlement verification, and the print authorization decision.
+
+Local today: talking to the printer, reporting device status, and a LAN-only deployment of the backend with `PRINTER_MODE=direct`.
+
+---
+
+## Technology: integrated vs. not
+
+Only what the repository actually contains is listed as integrated.
+
+| Area | Integrated | Notes |
+|---|---|---|
+| Web frontend | React 18, TypeScript, Vite, Tailwind CSS, React Router | `apps/web` |
+| Mobile | React Native, Expo (expo-router), TypeScript | `apps/mobile` |
+| Backend | Python FastAPI on Google Cloud Run | `services/backend` |
+| Node services | Express (payment agent, x402 gate), Node.js (gateway, printer adapter, Strands agent) | |
+| AI | Strands Agents SDK, 0G Private Computer, GLM-5.3 (`glm-5.3`) | Trust mode is chosen per document. |
+| Document processing | Python engine, python-docx, LibreOffice (DOCX to PDF) | `services/document-engine` |
+| Payments | Hedera Testnet, Hedera x402 (`@x402/*`, `@hiero-ledger/sdk`), Blocky402 testnet facilitator, HCS audit topic | Facilitator set by `FACILITATOR_URL`. |
+| 0G chain | `InklinkRegistry.sol` (Solidity 0.8.24), Hardhat, ethers.js, eth-account | Tested. **Not deployed yet**; records queue locally. |
+| Data | SQLite (mobile app), JSON snapshot on a Cloud Storage volume (backend) | |
+| Hardware | Local printer adapter, shop gateway, ESP32-S3 backend endpoints | |
+
+Not integrated, despite appearing in plans:
+
+- **Firestore.** The repository has no Firestore code. Backend state is a JSON snapshot.
+- **ESP32-S3 firmware (Arduino, SSD1306 OLED, buttons, LEDs, buzzer).** There is no firmware in this repository. The backend endpoints the device uses are implemented and tested, but the OLED, button, LED and buzzer behaviour is not verified from this source.
+- **Local SQLite in the gateway**, **local document processing**, and **offline authorized printing** (see the table above).
+- **0G Galileo contract on-chain.** Written and tested, awaiting deployment.
+
+---
+
+## Architecture Roadmap
+
+These are goals, not completed functionality.
+
+### Phase 1: Connected printing infrastructure (current)
+
+- Customer-to-shop workflow with no customer account.
+- AI-assisted editing with deterministic execution.
+- Separate document approval and quote approval.
+- Payment coordination and settlement verification on Hedera.
+- Connected shop gateway and printer adapter.
+- ESP32 device heartbeat, events and status display endpoints.
+- Remaining to finish Phase 1: run the shop gateway against the live backend, deploy the 0G registry contract, and prove one full print on real hardware.
+
+### Phase 2: Offline-first local infrastructure
+
+- Durable SQLite print queue on the shop machine.
+- A backend-issued, job-bound, expiring print authorization that the gateway verifies locally, so a paid and approved job can finish during an internet outage.
+- Idempotent synchronization of print status, with retries and replay of unsent events after reconnect.
+- Safe recovery after a power or network interruption.
+- Local document processing where it is technically feasible.
+- Better printer integrations beyond the Windows spooler.
+
+### Phase 3: Distributed and decentralized infrastructure
+
+- Reduce dependence on a single hosted backend.
+- Independently operated shop gateways.
+- Distributed shop discovery.
+- Alternative RPC providers for Hedera and 0G reads and writes.
+- Independent verification of settlement from public chain data.
+- Decentralized coordination and verifiable execution.
+- Stronger privacy-preserving computation.
+
+---
+
+## CROPS
+
+Lead property: **Privacy (P)**. Censorship resistance is the weakest property today and is stated as a trade-off.
+
+**C: Censorship resistant.** *Partial, and honest about it.* Users depend on our Cloud Run backend and domain, on one Hedera mirror node and facilitator, and on the 0G router. If our backend goes away the web app stops. A shop can run the whole backend on its own computer (`PRINTER_MODE=direct`), but it still needs 0G inference and Hedera. Independent gateways and alternative RPC providers are Phase 3 goals, not features.
+
+**O: Open source.** *Yes.* MIT licence. The repo contains the web app, mobile app, backend, document engine, agents, payment agent, gateway, printer adapter, deploy scripts and contracts. A user can build and run it from the repo with their own 0G, Hedera and Google Cloud credentials. See `docs/` and `deploy/gcp/README.md`.
+
+**P: Private.** *Lead property.*
+- Customers need no account, name or wallet in the browser. Sessions use random tokens.
+- The backend classifies each document before any model call. Sensitive or unreadable documents run in `private` mode (TeeML on 0G Private Computer) and are never downgraded. A missing key stops the run instead of falling back.
+- The 0G keys, gateway token and device token stay on the server. They are never sent to the browser or the agent.
+- The web client has no third-party trackers or analytics.
+- What others learn: Google Cloud hosts the backend and sees traffic and stored state; the 0G provider sees prompts in Standard and Verified modes (not in Private); the Hedera ledger and HCS topic are public and show the paying account, merchant, amount and a payment ID, but no document content; the ESP32 receives job status only, never documents, file names, INR prices or customer data.
+- Limit: this is not anonymity. A Hedera payer account is public, and the backend sees the document in order to process it.
+
+**S: Secure.**
+- Payments are authorized in the mobile app with a device key held in secure storage. The browser never takes payment.
+- A job counts as paid only after the payment agent verifies the transaction on the Hedera mirror node and sends an HMAC-signed callback. There is no simulated settlement for real jobs.
+- Pairing uses a signed shop QR, a pinned Ed25519 gateway key and a single-use challenge.
+- The gateway makes only outbound calls and can run only four allow-listed adapter calls. The PDF is fetched through a one-time reference.
+- The payment agent, agent and document engine are private Cloud Run services reachable only with Google ID tokens, and CORS has no wildcard.
+- Trust assumptions: our backend and Cloud Run project, the Hedera mirror node, the 0G provider's TEE attestation (a provider-level attestation, not a per-response signature check), and a shared gateway token and device token (per-device tokens are not built).
