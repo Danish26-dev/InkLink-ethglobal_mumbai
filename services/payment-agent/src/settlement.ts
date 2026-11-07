@@ -34,7 +34,62 @@ interface MirrorTokenTransfer {
 interface MirrorTransaction {
   result?: string;
   consensus_timestamp?: string;
+  transaction_id?: string;
   token_transfers?: MirrorTokenTransfer[];
+}
+
+export interface FoundTransfer {
+  transactionId: string;
+  consensusTimestamp: string;
+}
+
+/**
+ * Find a SUCCESS transfer of exactly `expected` from `payer` that reached consensus at or after
+ * `sinceSeconds` (the time the agent signed). Used only to resolve a payment whose settlement
+ * response was lost: the transfer may have happened, but we never received its id. We page
+ * forward from `sinceSeconds` and match on payer, token, recipient and exact amount, so an
+ * unrelated transfer can never be adopted.
+ *
+ * `transactionId` in the mirror node uses the id form `0.0.x-secs-nanos`; we convert it back to
+ * the SDK form `0.0.x@secs.nanos` the rest of the agent uses.
+ */
+export async function findTransferByPayer(
+  payer: string,
+  expected: ExpectedTransfer,
+  sinceSeconds: string,
+  fetchImpl: typeof fetch = fetch,
+  maxPages = 5,
+): Promise<FoundTransfer | null> {
+  let url: string | null =
+    `${MIRROR_BASE}/transactions?account.id=${encodeURIComponent(payer)}` +
+    `&transactiontype=CRYPTOTRANSFER&result=success&order=asc&limit=50&timestamp=gte:${encodeURIComponent(sinceSeconds)}`;
+  for (let page = 0; page < maxPages && url; page++) {
+    let body: { transactions?: MirrorTransaction[]; links?: { next?: string | null } };
+    try {
+      const res = await fetchImpl(url);
+      if (!res.ok) return null;
+      body = (await res.json()) as typeof body;
+    } catch {
+      return null; // a network error says nothing; the caller stays unresolved and retries later
+    }
+    for (const tx of body.transactions ?? []) {
+      if (tx.transaction_id && transactionMatches(tx, expected)) {
+        return {
+          transactionId: fromMirrorTransactionId(tx.transaction_id),
+          consensusTimestamp: tx.consensus_timestamp ?? "",
+        };
+      }
+    }
+    const next = body.links?.next;
+    url = next ? (next.startsWith("http") ? next : `${MIRROR_BASE.replace(/\/api\/v1$/, "")}${next}`) : null;
+  }
+  return null;
+}
+
+/** Mirror id form `0.0.x-secs-nanos` back to the SDK form `0.0.x@secs.nanos`. */
+export function fromMirrorTransactionId(mirrorId: string): string {
+  const m = /^(\d+\.\d+\.\d+)-(\d+)-(\d+)$/.exec(mirrorId);
+  return m ? `${m[1]}@${m[2]}.${m[3]}` : mirrorId;
 }
 
 /**
