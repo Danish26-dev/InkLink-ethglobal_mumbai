@@ -48,6 +48,12 @@ export interface PaymentRecord {
   gateQuote?: { amount: string; asset: string; payTo: string; resourceUrl: string; at: string };
   /** Set on failure: true when a transaction may have been submitted (spend kept, do not retry blindly). */
   fundsMayHaveMoved?: boolean;
+  /**
+   * Unix seconds just before the agent handed the signed transfer to the gate. Set only when a
+   * transfer was signed, so that a payment whose settlement response was lost (funds may have
+   * moved, no tx id) can be resolved by searching the mirror node from this time.
+   */
+  signedAtSeconds?: string;
   /** OfflinePay: the voucher that authorized this payment (instead of an online authorization). */
   offlineVoucherId?: string;
   /** Budget state recorded at creation for payments not backed by an online policy (audit log). */

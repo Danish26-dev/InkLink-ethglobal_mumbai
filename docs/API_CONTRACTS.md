@@ -392,7 +392,11 @@ Retries and double-pay protection:
   `SETTLEMENT_FAILED`. Retry it with a **new** `paymentId`; the same one is `409 PAYMENT_ID_CONFLICT`.
 - **Funds may have moved** (a transaction was claimed but is unverified, a signed transfer was
   sent but no settlement answer came back, or a restart interrupted it): the voucher **stays
-  `PENDING_SETTLEMENT`**, and any retry is
+  `PENDING_SETTLEMENT`** while the agent resolves it. For the "no settlement answer, no tx id"
+  case the agent searches the mirror node for the exact agent→merchant transfer made after it
+  signed, and either settles the payment (so the voucher reconciles to `SETTLED`) or, once the
+  transaction's validity window has fully passed with no such transfer, releases the spend and
+  fails it. Until then, any retry is
   `409 VOUCHER_SETTLEMENT_IN_PROGRESS`. Only re-verification on the mirror node resolves it, at
   startup or when the payment is re-checked.
 - **Persistence:** the ledger file (`OFFLINE_LEDGER_FILE`, default next to `AGENT_STATE_FILE`) is

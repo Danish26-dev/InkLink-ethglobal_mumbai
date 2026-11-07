@@ -39,6 +39,7 @@ import {
   type PaymentRecord,
 } from "./store.js";
 import {
+  findTransferByPayer,
   hashscanUrlFor,
   verifyOnChainWithRetry,
   type DeliveryResult,
@@ -435,6 +436,12 @@ export class PaymentAgent {
         );
       }
 
+      // Remember when we are about to sign (a few seconds early is fine; the mirror search uses
+      // `>=`). If the settlement response is then lost, resolveOutcome() searches from here.
+      paymentStore.update(record.paymentId, {
+        signedAtSeconds: Math.floor(Date.now() / 1000 - 5).toString(),
+      });
+
       settlement = await this.x402.pay(
         resourceUrl,
         { payTo, amount: record.amount },
@@ -597,6 +604,17 @@ export class PaymentAgent {
       } else if (rec.status === "processing") {
         summary.outcomeUnknown++;
         this.fail(rec, "interrupted_by_restart_outcome_unknown", false);
+      } else if (
+        rec.status === "failed" &&
+        rec.fundsMayHaveMoved === true &&
+        !rec.transactionId &&
+        rec.payTo &&
+        rec.signedAtSeconds
+      ) {
+        // A signed transfer whose settlement response was lost: no tx id to re-verify. Search
+        // the mirror node for the matching transfer and either settle it or release the spend.
+        summary.reverified++;
+        work.push(this.resolveOutcome(rec));
       } else if (rec.status === "settled" && rec.callbackStatus !== "delivered" && rec.event) {
         summary.callbacksResent++;
         work.push(this.sendCallback(rec.paymentId, rec.event));
@@ -609,6 +627,51 @@ export class PaymentAgent {
 
     await Promise.all(work);
     return summary;
+  }
+
+  /** How long after signing a lost-response payment stays unresolved before we treat it as
+   * "nothing moved". A Hedera transaction is valid for 2 minutes; 5 minutes is a safe margin. */
+  private static readonly RESOLVE_WINDOW_MS = 5 * 60_000;
+
+  /**
+   * Resolve a payment that was signed but whose settlement response was lost (funds may have
+   * moved, no tx id). Search the mirror node for the exact transfer from the agent to the shop
+   * after the signing time:
+   *  - found  -> adopt that transaction id and finalize normally (verify, callback, audit);
+   *  - not found yet, still inside the validity window -> stay unresolved, try again next recover();
+   *  - not found and the window has fully passed -> nothing moved, release the spend.
+   * Safe to call repeatedly. Never double-pays: it only ever adopts an on-chain transfer.
+   */
+  private async resolveOutcome(record: PaymentRecord) {
+    const payTo = record.payTo;
+    const signedAt = record.signedAtSeconds;
+    if (!payTo || !signedAt) return;
+    const cfg = loadHederaConfig();
+    const expected = {
+      tokenId: cfg.usdcTokenId,
+      payTo,
+      amountAtomic: toSmallestUnit(record.amount, cfg.usdcDecimals),
+    };
+    const found = await findTransferByPayer(
+      this.opts.payerAccountId,
+      expected,
+      signedAt,
+      this.opts.gate?.fetchImpl,
+    );
+    if (found) {
+      // Clear the failed/funds-may-have-moved marks, then finalize as a normal settlement.
+      paymentStore.update(record.paymentId, { status: "processing", failureReason: undefined, fundsMayHaveMoved: undefined });
+      const fresh = paymentStore.get(record.paymentId);
+      if (fresh) await this.finalize(fresh, payTo, found.transactionId);
+      return;
+    }
+    const windowPassed = Date.now() > (Number(signedAt) + 5) * 1000 + PaymentAgent.RESOLVE_WINDOW_MS;
+    if (windowPassed) {
+      // The transaction could no longer have reached consensus: nothing moved. Release the spend
+      // and record a terminal, retryable failure.
+      this.fail(record, "no_settlement_found_after_signing_window", true);
+    }
+    // else: still within the window; leave it for the next recover() pass.
   }
 
   private async sendCallback(paymentId: string, event: PaymentSettledEvent) {
