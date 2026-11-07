@@ -1,7 +1,7 @@
 # Inklink: native app, payments and services
 
-> The repository root `README.md` describes the cinematic landing page. This document covers the
-> monorepo folders `apps/`, `services/`, `packages/` and `docs/`.
+> The repository root `README.md` is the project overview (architecture, status, setup). This
+> document covers the monorepo folders `apps/`, `services/`, `packages/` and `docs/`.
 
 **Your Document. Your Agent. Your Control.**
 
